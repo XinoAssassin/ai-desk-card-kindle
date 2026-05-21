@@ -89,62 +89,70 @@ Every widget has a JSON schema at `schemas/<type>.schema.json`. The
 ### Work staples
 
 #### `weather` — _narrow OK_
-City + big temp + condition + 2-day forecast.
+City + big temp + condition + up to 2-day forecast.
 ```json
-{"location":"Beijing","temp":22,"condition":"晴","high":24,"low":12,
- "forecast":[{"day":"明","temp_high":26,"temp_low":14,"condition":"多云"}]}
+{"location":"Beijing",
+ "current":{"temp_c":22,"condition":"晴"},
+ "forecast":[{"day":"明","high":26,"low":14,"condition":"多云"}]}
 ```
 
 #### `calendar` — _wide preferred_ (narrow shows fewer rows)
-Today's events with start time.
+Today's events. Pass `now_iso` so the renderer can mark which is current.
 ```json
-{"events":[{"time":"09:30","title":"standup"},
-           {"time":"14:00","title":"design review"}]}
+{"now_iso":"2026-05-21T13:30:00",
+ "events":[{"start":"09:30","title":"standup"},
+           {"start":"14:00","end":"15:00","title":"design review"}]}
 ```
 
 #### `next-meeting` — _wide preferred_
 The single next event with big countdown. Use when only ONE thing matters.
 ```json
-{"title":"design review","starts_in_min":42,
- "location":"Zoom","attendees":3}
+{"title":"design review","start_in":"in 42m","start_at":"14:00",
+ "location":"Zoom","attendees":"Alice, Bob, Carol"}
 ```
 
 #### `messages` — _wide preferred_
-Up to 3 IM previews.
+Up to 3 IM previews. Each item: sender + preview + age.
 ```json
-{"items":[{"from":"Bob","preview":"PR ready for review","unread":true}]}
+{"items":[{"sender":"Bob","preview":"PR ready for review","age":"2m"}]}
 ```
 
 #### `inbox` — _narrow OK_
-Total unread + per-source breakdown.
+Total unread + per-source breakdown. Cap 4 sources.
 ```json
-{"total":12,"sources":[{"name":"gmail","count":4},
-                       {"name":"slack","count":8}]}
+{"total":12,
+ "sources":[{"name":"gmail","count":4},{"name":"slack","count":8}]}
 ```
 
 #### `system` — _narrow OK_
 CPU / mem / disk / battery / net / temp. Vertical 4-row in narrow slot.
+**Note**: field is `memory_pct` (not `mem_pct`); `battery_pct=255` means no battery.
 ```json
-{"cpu_pct":42,"mem_pct":63,"disk_pct":81,"battery_pct":88}
+{"cpu_pct":42,"memory_pct":63,"disk_pct":81,"battery_pct":88,
+ "net_down_kbps":120,"temp_c":56}
 ```
 
 #### `git-status` — _narrow OK_
-Branch + dirty/staged + ahead/behind + last commit.
+Branch + modified/untracked/staged + ahead/behind + last commit.
 ```json
-{"branch":"main","dirty":3,"ahead":2,"last_commit":"add login flow"}
+{"repo_name":"claude-card","branch":"main",
+ "modified":3,"untracked":1,"staged":0,"ahead":2,"behind":0,
+ "last_commit_msg":"add login flow"}
 ```
 
 #### `pr-queue` — _wide preferred_
-PRs needing your review + your open PRs.
+PR counts + up to 4 items. Status: `review` | `yours` | `approved` | `blocked`.
 ```json
-{"to_review":[{"title":"fix race","author":"alice","age_h":4}],
- "yours":[{"title":"feat: cron","ci":"green"}]}
+{"review_count":2,"your_open_count":1,
+ "items":[{"number":"#42","title":"fix race","author":"alice","status":"review"},
+          {"number":"#51","title":"feat: cron","author":"you","status":"yours"}]}
 ```
 
 #### `now-playing` — _wide preferred_
-Track + artist + progress + source.
+Track + artist + position/duration (seconds, not float progress).
 ```json
-{"title":"Stairway","artist":"Led Zeppelin","progress":0.42,"source":"Spotify"}
+{"track":"Stairway","artist":"Led Zeppelin",
+ "source":"Spotify","position_sec":252,"duration_sec":482,"playing":true}
 ```
 
 ### Note-taking & focus
@@ -153,21 +161,23 @@ Track + artist + progress + source.
 Free-form sticky note. **The most flexible 记事 component**. Use when
 nothing else fits ("Bob coming at 3pm", "remember to update LinkedIn").
 ```json
-{"title":"备忘","body":"3pm 见 Bob","source":"manual"}
+{"text":"3pm 见 Bob — 带上昨天那张设计稿","source":"manual","age":"5m"}
 ```
 
 #### `todo` — _either_
-Up to 4 tasks with `tag` (overdue / today / future).
+Up to 4 tasks. `tag`: `today` | `tomorrow` | `this-week` | `later` | `overdue`.
 ```json
-{"title":"今天","items":[{"text":"刷固件","tag":"today"},
-                          {"text":"写文档","tag":"overdue"}]}
+{"title":"今天",
+ "items":[{"text":"刷固件","tag":"today"},
+          {"text":"写文档","tag":"overdue","due":"2026-05-20"}]}
 ```
 
 #### `focus` — _wide preferred_
-ONE active task + big countdown + Pomodoro dots.
+ONE active task + big text + subtitle + Pomodoro dots.
 ```json
-{"task":"finish onboarding doc","started":"12:18",
- "countdown_min":18,"pomodoros_done":2,"pomodoros_total":4}
+{"task":"finish onboarding doc",
+ "big_text":"18 min","subtitle":"started 12:18 · 番茄 2/4",
+ "pomodoros_done":2,"pomodoros_planned":4}
 ```
 
 #### `deadlines` — _either_
@@ -190,14 +200,14 @@ Health nudge. Last-break + sitting + eye-rest.
 #### `ai-status` — _narrow OK_
 Model + task + context bar. Push at the start of any non-trivial task.
 ```json
-{"model":"Sonnet 4.6","session_name":"refactor auth",
- "task":"writing tests","ctx_used_pct":42,"elapsed_min":8}
+{"session_name":"refactor auth","model":"Sonnet 4.6","task":"writing tests",
+ "context":{"used":42000,"limit":200000},"elapsed_seconds":480}
 ```
 
 #### `ai-tasks` — _narrow OK_
 Running / waiting / blocked / done-today counters. Vertical in narrow.
 ```json
-{"running":2,"waiting":1,"blocked":0,"done_today":7}
+{"running":2,"waiting":1,"blocked":0,"completed_today":7}
 ```
 
 ## Disambiguation — common confusions

@@ -128,13 +128,24 @@ class BLETransport(Transport):
             from bleak import BleakScanner, BleakClient
         except ImportError:
             log("[ble] bleak not installed. pip install bleak"); return
+        # Match either ad.local_name (live, from the actual ADV packet) OR
+        # d.name (macOS cached). Critical: on Macs that previously paired
+        # with the buddy firmware, d.name will be stale ("Claude-XXXX")
+        # even after we flash claude-card; the live local_name field has
+        # the correct "Card-XXXX". Prefer the live name.
+        prefix = self._name_prefix
+        def matcher(d, ad):
+            for candidate in (ad.local_name, d.name):
+                if candidate and candidate.startswith(prefix):
+                    return True
+            return False
+
         while True:
-            log(f"[ble] scanning for '{self._name_prefix}*'...")
+            log(f"[ble] scanning for '{prefix}*' (ad.local_name | d.name)...")
             device = None
             try:
                 device = await BleakScanner.find_device_by_filter(
-                    lambda d, ad: bool(d.name) and d.name.startswith(self._name_prefix),
-                    timeout=10.0)
+                    matcher, timeout=10.0)
             except Exception as e: log(f"[ble] scan: {e}")
             if not device:
                 await asyncio.sleep(5); continue
@@ -541,7 +552,8 @@ class CardHandler(BaseHTTPRequestHandler):
             except ImportError as e:
                 return self._reply(500, {"error": f"Pillow missing: {e}"})
             try:
-                png = render_preview_png(_widget_snapshot())
+                png = render_preview_png(_widget_snapshot(),
+                                          status=_bar_status())
             except Exception as e:
                 return self._reply(500, {"error": f"render failed: {e!r}"})
             return self._reply_png(200, png)

@@ -129,6 +129,23 @@ void bleInit(const char* deviceName) {
   adv->setScanResponse(true);
   adv->setMinPreferred(0x06);   // iOS-friendly connection interval
   adv->setMaxPreferred(0x12);
+
+  // CRITICAL: BLEDevice::init(name) only writes the GAP name; the actual
+  // ADV/scan-response packet's "complete local name" field is left to the
+  // BT stack's default which is *cached in NVS across firmware reflash*.
+  // If this device previously ran m5-paper-buddy ("Claude-XXXX"), the
+  // cached scan response still says "Claude-..." even after we flash
+  // card firmware that calls init("Card-..."). Force an explicit
+  // advertisement payload with the correct name to override the cache.
+  BLEAdvertisementData advData;
+  advData.setFlags(0x06);                       // BR/EDR not supported + LE general discoverable
+  advData.setCompleteServices(BLEUUID(NUS_SERVICE_UUID));
+  adv->setAdvertisementData(advData);
+
+  BLEAdvertisementData scanRsp;
+  scanRsp.setName(deviceName);                  // ← this is what fixes the wrong-name bug
+  adv->setScanResponseData(scanRsp);
+
   BLEDevice::startAdvertising();
   Serial.printf("[ble] advertising as '%s'\n", deviceName);
 }
