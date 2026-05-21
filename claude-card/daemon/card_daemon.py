@@ -167,13 +167,29 @@ class BLETransport(Transport):
                 self._client = None; self._connected_evt.clear()
             await asyncio.sleep(2)
 
+    # CoreBluetooth on macOS does NOT auto-fragment writeWithoutResponse
+    # writes larger than the negotiated MTU — they silently get dropped.
+    # The line-based frame_chunk JSON is ~2.7 KB per line, so we manually
+    # slice into MTU-3 byte payloads. Device's LineBuf reassembles by
+    # accumulating until '\n', so as long as we don't insert newlines in
+    # the middle the parser still sees one line.
+    _BLE_MTU = 182          # macOS typical ATT_MTU is 185 (data = MTU-3)
+
     def write(self, data: bytes):
         client = self._client
         if client is None or not client.is_connected: return
         try:
-            fut = asyncio.run_coroutine_threadsafe(
-                client.write_gatt_char(NUS_RX_UUID, data, response=False), self._loop)
-            fut.result(timeout=3)
+            chunks = [data[i:i + self._BLE_MTU]
+                      for i in range(0, len(data), self._BLE_MTU)]
+            for c in chunks:
+                # response=True (Write With Response) — acknowledged, slow
+                # but reliable. response=False on CoreBluetooth silently
+                # drops once the OS TX buffer fills (no backpressure signal
+                # via bleak), so a big frame_chunk line vanishes mid-transfer.
+                fut = asyncio.run_coroutine_threadsafe(
+                    client.write_gatt_char(NUS_RX_UUID, c, response=True),
+                    self._loop)
+                fut.result(timeout=5)
         except Exception as e: log(f"[ble] write: {e!r}")
 
     def connected(self): return self._connected_evt.is_set()

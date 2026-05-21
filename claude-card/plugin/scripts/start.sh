@@ -12,11 +12,17 @@ if pgrep -f "card_daemon.py" >/dev/null 2>&1; then
   exit 0
 fi
 
-# PlatformIO's libexec carries pyserial + bleak, so we don't have to install.
+# PlatformIO's libexec carries pyserial + bleak. We must also use its
+# python interpreter (3.14) because bleak source uses `match` statements
+# (Python 3.10+) — running on macOS' system python3.9 crashes the BLE
+# thread on import.
+PIO_PY="/opt/homebrew/Cellar/platformio/6.1.19_1/libexec/bin/python3"
+PY="$PIO_PY"
+[ -x "$PY" ] || PY="$(command -v python3)"
 export PYTHONPATH="/opt/homebrew/Cellar/platformio/6.1.19_1/libexec/lib/python3.14/site-packages:${PYTHONPATH:-}"
 
 LOGFILE="${TMPDIR:-/tmp}/claude_card_daemon.log"
-nohup python3 "$DAEMON" --transport auto > "$LOGFILE" 2>&1 &
+nohup "$PY" "$DAEMON" --transport auto > "$LOGFILE" 2>&1 &
 PID=$!
 disown
 sleep 0.6

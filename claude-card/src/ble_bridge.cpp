@@ -15,9 +15,12 @@
 #define NUS_TX_UUID      "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
 // Incoming bytes are buffered in a simple ring for bleRead()/bleAvailable().
-// Sized to hold a transcript snapshot JSON plus headroom; the GATT layer
-// will flow-control if we fall behind.
-static const size_t RX_CAP = 2048;
+// Sized for v0.6 server-side rendering: a single frame_chunk JSON line is
+// ~2.7 KB (2 KB raw → base64 + JSON wrapper), and on BLE that's delivered
+// as ~15 MTU-sized writes in quick succession. Must outpace the main-loop
+// poll cadence. 2 KB was too small — frame_chunk bytes dropped silently;
+// device's frame_begin parse never fired. 16 KB gives 6× headroom.
+static const size_t RX_CAP = 16384;
 static uint8_t  rxBuf[RX_CAP];
 static volatile size_t rxHead = 0;
 static volatile size_t rxTail = 0;

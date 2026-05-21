@@ -252,6 +252,35 @@ extern "C" void cardPollSerial() {
 // will revisit baud after confirming the rest of the architecture works.
 static constexpr uint32_t kSerialBaud = 115200;
 
+// Pairing overlay: when blePasskey() transitions to nonzero (peer requesting
+// MITM SC pairing), we paint a big PIN over the current frame. After the
+// pair completes, the next daemon connection's handshake re-pushes the
+// widget frame and the panel returns to normal.
+static void paintPasskeyOverlay(uint32_t pk) {
+    M5EPD_Canvas c(&M5.EPD);
+    c.createCanvas(540, 960);
+    c.fillCanvas(0);   // white
+    c.setTextColor(15);
+    c.setTextDatum(CC_DATUM);
+
+    c.setTextSize(36);
+    c.drawString("BLE PAIRING", 270, 280);
+
+    char pin[8];
+    snprintf(pin, sizeof(pin), "%06lu", (unsigned long)pk);
+    c.setTextSize(96);
+    c.drawString(pin, 270, 450);
+
+    c.setTextSize(24);
+    c.drawString("enter this PIN on your Mac", 270, 620);
+    c.setTextSize(20);
+    c.drawString("(System Settings -> Bluetooth)", 270, 680);
+
+    c.pushCanvas(0, 0, UPDATE_MODE_GC16);
+    c.deleteCanvas();
+    Serial.printf("[ble] passkey UI displayed: %06lu\n", (unsigned long)pk);
+}
+
 static void paintBootSplash() {
     M5EPD_Canvas c(&M5.EPD);
     c.createCanvas(540, 960);
@@ -309,6 +338,26 @@ void loop() {
     if (now - s_lastStatus > 60000) {
         s_lastStatus = now;
         emitStatusReport();
+    }
+
+    // BLE pairing UI: when the BT stack emits a passkey (peer initiated
+    // MITM Secure Connections pair), paint it big on the e-ink so the
+    // user can type it into macOS' pair dialog. When it clears (auth
+    // complete or aborted), the daemon's next handshake will re-push
+    // the widget frame so the panel returns to normal.
+    static uint32_t s_lastPk = 0;
+    uint32_t pk = blePasskey();
+    if (pk != s_lastPk) {
+        s_lastPk = pk;
+        if (pk != 0) {
+            paintPasskeyOverlay(pk);
+        } else {
+            // Notify daemon so it triggers an immediate re-push instead
+            // of waiting for the 5-minute keepalive.
+            const char* msg = "{\"ack\":\"paired\",\"ok\":true}\n";
+            Serial.print(msg);
+            bleWrite((const uint8_t*)msg, strlen(msg));
+        }
     }
 
     delay(2);             // tiny yield so WDT + BLE stack stay happy
