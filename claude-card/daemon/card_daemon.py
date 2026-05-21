@@ -187,6 +187,36 @@ def remove_rx_listener(fn):
         except ValueError: pass
 
 
+def _telemetry_listener(line: str):
+    """Permanent listener: firmware v0.6.4+ emits a status_report JSON line
+    every ~60s (and on boot, and in response to cmd:ping). Parse and store
+    into DEVICE_TELEMETRY so the bottom bar (battery) and settings page
+    (firmware / mac / uptime) have live data."""
+    try:
+        obj = json.loads(line.strip())
+    except Exception:
+        return
+    if not isinstance(obj, dict) or obj.get("ack") != "status":
+        return
+    # Map firmware field names → DEVICE_TELEMETRY keys.
+    mapping = {
+        "fw":          "firmware",
+        "mac":         "mac",
+        "battery_pct": "battery_pct",
+        "battery_mv":  "battery_mv",
+    }
+    for src, dst in mapping.items():
+        if src in obj:
+            DEVICE_TELEMETRY[dst] = obj[src]
+    if "uptime_s" in obj:
+        try:
+            s = int(obj["uptime_s"])
+            h, m = s // 3600, (s % 3600) // 60
+            DEVICE_TELEMETRY["uptime"] = f"{h}h {m}m" if h else f"{m}m"
+        except (TypeError, ValueError):
+            pass
+
+
 def on_rx_byte(b: int):
     global _rx_buf
     if b in (0x0A, 0x0D):
@@ -598,6 +628,11 @@ class CardHandler(BaseHTTPRequestHandler):
 
             add_rx_listener(_capture)
             try:
+                # v0.6.4+ firmware replies to cmd:ping with a rich status
+                # (fw + mac + battery + uptime). Older firmware ignores
+                # cmd:ping but acks cmd:owner. Send both; the listener
+                # captures whichever fires first.
+                send_line({"cmd": "ping"})
                 send_line({"cmd": "owner",
                            "name": os.environ.get("USER", "")})
                 evt.wait(timeout=2.5)
@@ -610,6 +645,8 @@ class CardHandler(BaseHTTPRequestHandler):
                     "our_firmware": True,
                     "ack":          heard,
                     "firmware":     DEVICE_TELEMETRY.get("firmware"),
+                    "mac":          DEVICE_TELEMETRY.get("mac"),
+                    "battery_pct":  DEVICE_TELEMETRY.get("battery_pct"),
                 })
             return self._reply(200, {
                 "connected":    True,
@@ -721,6 +758,7 @@ def main():
         if WIDGET_CACHE:
             schedule_push()
 
+    add_rx_listener(_telemetry_listener)
     TRANSPORT.start(on_rx_byte, on_connect=_handshake)
     threading.Thread(target=keepalive_loop, daemon=True).start()
     threading.Thread(target=push_loop, daemon=True).start()

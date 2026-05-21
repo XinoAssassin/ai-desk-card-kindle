@@ -16,20 +16,56 @@
 #include "frame_receiver.h"
 
 #ifndef CARD_VERSION
-#define CARD_VERSION "0.5-dev"
+#define CARD_VERSION "0.6.4"
 #endif
+
+// Bumped each time the daemon-side protocol changes. Daemon's
+// /firmware-probe compares this against its own to decide compatibility.
+#define CARD_PROTO 1
 
 // ----------------------------------------------------------------------------
 // Serial / BLE protocol dispatch
 // ----------------------------------------------------------------------------
 
 static char btName[16] = "Card";
+static char g_macStr[18] = "";          // cached "AA:BB:CC:DD:EE:FF"
 
 static void startBt() {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_BT);
     snprintf(btName, sizeof(btName), "Card-%02X%02X", mac[4], mac[5]);
+    snprintf(g_macStr, sizeof(g_macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     bleInit(btName);
+}
+
+// Rough battery percentage from M5.getBatteryVoltage() (mV). The M5EPD
+// pack is a 1S lipo: ~4200 mV full, ~3300 mV empty. We clamp to [0,100].
+static int batteryPct(uint32_t* out_mv = nullptr) {
+    uint32_t mv = M5.getBatteryVoltage();
+    if (out_mv) *out_mv = mv;
+    int pct = (int)((mv - 3300) * 100 / (4200 - 3300));
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return pct;
+}
+
+// Emit a status_report JSON line. Daemon's RX parser picks it up and
+// stores fields into DEVICE_TELEMETRY (battery for the bottom bar; fw /
+// mac / uptime_s for the settings page). Safe to call on any cadence.
+static void emitStatusReport() {
+    uint32_t mv = 0;
+    int pct = batteryPct(&mv);
+    char buf[192];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"ack\":\"status\",\"fw\":\"%s\",\"proto\":%d,\"mac\":\"%s\","
+        "\"uptime_s\":%lu,\"battery_pct\":%d,\"battery_mv\":%u}\n",
+        CARD_VERSION, CARD_PROTO, g_macStr,
+        (unsigned long)(millis() / 1000), pct, (unsigned)mv);
+    if (n > 0) {
+        Serial.print(buf);
+        bleWrite((const uint8_t*)buf, (size_t)n);
+    }
 }
 
 // JSON command dispatch — claude-card only cares about widget_set + time + owner.
@@ -102,6 +138,26 @@ static bool dispatchCmd(JsonDocument& doc) {
             Serial.print(response);
             bleWrite((const uint8_t*)response, strlen(response));
             return true;
+        }
+        if (strcmp(cmd, "ping") == 0) {
+            // Synchronous health probe — daemon's /firmware-probe uses
+            // this. Reply with the same telemetry as the periodic
+            // status_report so a single ping gives the daemon everything
+            // it needs for the settings page.
+            emitStatusReport();
+            return true;
+        }
+        if (strcmp(cmd, "restart") == 0) {
+            // Soft restart via settings page → /restart endpoint. The 200 ms
+            // delay lets the daemon log the ack and the serial buffer flush
+            // before we ESP.restart().
+            const char* response = "{\"ack\":\"restart\",\"ok\":true}\n";
+            Serial.print(response);
+            bleWrite((const uint8_t*)response, strlen(response));
+            Serial.flush();
+            delay(200);
+            ESP.restart();
+            return true;   // unreachable
         }
     }
 
@@ -236,9 +292,24 @@ void setup() {
     startBt();
     Serial.printf("[ble] advertising as '%s'\n", btName);
     Serial.println("[boot] ready — awaiting first frame from daemon");
+
+    // Initial status report so the daemon's DEVICE_TELEMETRY has data
+    // immediately (settings page / battery in bar work from boot).
+    emitStatusReport();
 }
 
 void loop() {
-    cardPollSerial();   // drains serial / BLE, dispatches commands
-    delay(2);            // tiny yield so WDT + BLE stack stay happy
+    cardPollSerial();    // drains serial / BLE, dispatches commands
+
+    // Periodic status_report every 60 s. Cheap (one JSON line), keeps the
+    // daemon's DEVICE_TELEMETRY warm so the bottom-bar battery indicator
+    // doesn't go stale.
+    static uint32_t s_lastStatus = 0;
+    uint32_t now = millis();
+    if (now - s_lastStatus > 60000) {
+        s_lastStatus = now;
+        emitStatusReport();
+    }
+
+    delay(2);             // tiny yield so WDT + BLE stack stay happy
 }
