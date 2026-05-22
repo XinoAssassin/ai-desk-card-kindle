@@ -17,6 +17,9 @@
 #include "frame_receiver.h"
 #include "wifi_bridge.h"
 #include "http_server.h"
+#include "sleep_card.h"
+
+#include <Preferences.h>
 
 #ifndef CARD_VERSION
 #define CARD_VERSION "0.6.4"
@@ -34,6 +37,55 @@
 RTC_DATA_ATTR uint32_t g_lastContentMagic = 0;
 static const uint32_t CONTENT_MAGIC = 0xDE5CCA8D;   // "DESK CARD"
 
+// v0.10: idle-sleep timer. After N minutes with no inbound activity
+// (frame chunk / cmd / status_report), firmware paints sleep_card.bin
+// from LittleFS + esp_deep_sleep — no daemon required. User sets
+// minutes via cmd:idle_sleep_set, persists in NVS namespace "idle".
+// minutes=0 disables the timer. Default 0.
+static uint32_t g_idleMinutes = 0;
+static uint32_t g_lastActivityMs = 0;
+static Preferences g_idlePrefs;
+
+static void idleActivityReset() {
+    g_lastActivityMs = millis();
+}
+
+static void idleLoadPref() {
+    g_idlePrefs.begin("idle", true);
+    g_idleMinutes = g_idlePrefs.getUInt("min", 0);
+    g_idlePrefs.end();
+    if (g_idleMinutes > 0) {
+        Serial.printf("[idle] timer = %u min\n", g_idleMinutes);
+    } else {
+        Serial.println("[idle] timer disabled (cmd:idle_sleep_set to enable)");
+    }
+}
+
+static void idleSavePref(uint32_t minutes) {
+    g_idlePrefs.begin("idle", false);
+    g_idlePrefs.putUInt("min", minutes);
+    g_idlePrefs.end();
+    g_idleMinutes = minutes;
+}
+
+static void idleSleepNowLocal() {
+    Serial.println("[idle] threshold hit — painting local sleep card + "
+                   "deep sleep");
+    if (sleepCardDisplay()) {
+        // GC16 settling — same constant as cmd:sleep_now path.
+        delay(2500);
+        M5.EPD.Sleep();
+        delay(300);
+    } else {
+        Serial.println("[idle] no sleep card available — sleeping anyway "
+                       "(panel keeps last frame at 0 W)");
+    }
+    Serial.println("[idle] esp_deep_sleep_start()");
+    Serial.flush();
+    delay(50);
+    esp_deep_sleep_start();
+}
+
 // Called from frame_receiver after the first successful display this boot
 // so subsequent boots can preserve the panel content.
 extern "C" void markContentDisplayed() {
@@ -41,6 +93,9 @@ extern "C" void markContentDisplayed() {
         g_lastContentMagic = CONTENT_MAGIC;
         Serial.println("[boot] content magic set — future boots will preserve last frame");
     }
+    // Also resets idle-sleep timer: a fresh frame means there's a live
+    // daemon talking to us, so the user isn't idle.
+    g_lastActivityMs = millis();
 }
 
 // ----------------------------------------------------------------------------
@@ -304,6 +359,20 @@ bool dispatchCmd(JsonDocument& doc) {
     }
 
     if (cmd) {
+        if (strcmp(cmd, "idle_sleep_set") == 0) {
+            // {"cmd":"idle_sleep_set","minutes":30} — 0 disables.
+            int m = doc["minutes"] | 0;
+            if (m < 0) m = 0;
+            if (m > 1440) m = 1440;   // cap at 24 h
+            idleSavePref((uint32_t)m);
+            idleActivityReset();
+            char ack[80];
+            int n = snprintf(ack, sizeof(ack),
+                "{\"ack\":\"idle_sleep_set\",\"minutes\":%d}\n", m);
+            Serial.print(ack);
+            bleWrite((const uint8_t*)ack, (size_t)n);
+            return true;
+        }
         if (strcmp(cmd, "set_chips") == 0) {
             // Daemon publishes the active view's tappable rects so we can
             // paint the local tap-ack without round-tripping. Replace the
@@ -627,6 +696,17 @@ void setup() {
     // Initial status report so the daemon's DEVICE_TELEMETRY has data
     // immediately (settings page / battery in bar work from boot).
     emitStatusReport();
+
+    // v0.10: idle-sleep timer init. Loads minutes from NVS so the
+    // setting survives reboots.
+    idleLoadPref();
+    idleActivityReset();
+    if (g_idleMinutes > 0) {
+        bool ok = sleepCardAvailable();
+        Serial.printf("[idle] sleep_card.bin %s — auto-sleep %s\n",
+                      ok ? "found" : "missing",
+                      ok ? "will paint card" : "will deep-sleep blank");
+    }
 }
 
 void loop() {
@@ -634,6 +714,20 @@ void loop() {
     wifiPoll();          // drives reconnect retries
     httpServerPoll();    // accepts inbound HTTP connections (one at a time)
     pollTouchAndEmit();  // bottom-bar 睡眠 / 设置 chip taps go up to daemon
+
+    // v0.10: idle-sleep timer. Any of these counts as activity:
+    //   - emitStatusReport (every 60 s) keeps the timer from creeping
+    //     forward while device is online → won't auto-sleep while in use
+    //   - frame_chunk / frame_end (frame_receiver calls into
+    //     markContentDisplayed → idleActivityReset)
+    //   - cmd dispatch resets via the dispatchCmd entry
+    if (g_idleMinutes > 0) {
+        uint32_t now = millis();
+        uint64_t threshold_ms = (uint64_t)g_idleMinutes * 60ULL * 1000ULL;
+        if ((uint64_t)(now - g_lastActivityMs) > threshold_ms) {
+            idleSleepNowLocal();   // does not return
+        }
+    }
 
     // v0.8: power-mode tracking. If user plugs in USB while we were on
     // battery (radio off), bring Wi-Fi back up automatically. If they
