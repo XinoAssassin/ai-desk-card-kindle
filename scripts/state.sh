@@ -20,6 +20,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROBE="$REPO_ROOT/plugin/skills/card-onboard/scripts/probe.sh"
 INTERESTS="${HOME}/.ai-desk-card/interests.yaml"
+DAEMON_URL="${CARD_DAEMON_URL:-http://127.0.0.1:9877}"
 
 # 1. Run the inner probe
 if [[ ! -x "$PROBE" && ! -f "$PROBE" ]]; then
@@ -46,23 +47,36 @@ else
   INTERESTS_CONFIGURED=false
 fi
 
-# 4. Merge: emit unified shape
-export INNER_JSON PIO_INSTALLED INTERESTS_CONFIGURED INTERESTS
+# 4. Live device heartbeat — distinguishes "we lost the transport at
+#    startup so everything's false" from "transport's there but device
+#    isn't reporting back". Daemon's /heartbeat aggregates the answer.
+HEARTBEAT_JSON="$(curl -sf -m 2 "$DAEMON_URL/heartbeat" 2>/dev/null || echo '{}')"
+
+# 5. Merge: emit unified shape
+export INNER_JSON PIO_INSTALLED INTERESTS_CONFIGURED INTERESTS HEARTBEAT_JSON
 python3 - <<'PY'
-import json, os, sys
+import json, os
 inner = json.loads(os.environ["INNER_JSON"])
 pio   = os.environ["PIO_INSTALLED"] == "true"
 icfg  = os.environ["INTERESTS_CONFIGURED"] == "true"
 ipath = os.environ["INTERESTS"]
+try:
+    hb = json.loads(os.environ["HEARTBEAT_JSON"])
+    if not isinstance(hb, dict): hb = {}
+except Exception:
+    hb = {}
 
 ports = inner.get("serial_ports") or []
 fw    = inner.get("firmware") or {}
 mdns  = inner.get("mdns_peer")
 
-# flashed: either daemon got an ack (our_firmware=true) OR mDNS peer is
-# visible (means firmware is up and advertising) OR there's a banner from
-# install_firmware --detect.
-flashed = bool(fw.get("our")) or bool(mdns) or bool(fw.get("banner"))
+# flashed: heartbeat is the strongest signal (device just spoke).
+# Then mDNS visibility (device is up + on Wi-Fi). Then probe ack.
+# Banner alone isn't enough — install_firmware --detect can yield
+# "unknown" even when no device is present.
+flashed = (bool(hb.get("alive"))
+           or bool(fw.get("our"))
+           or bool(mdns))
 
 state = {
   "hardware": {
@@ -72,17 +86,26 @@ state = {
   },
   "firmware": {
     "flashed":  flashed,
-    "ours":     bool(fw.get("our")),
+    "ours":     bool(fw.get("our")) or bool(hb.get("alive")),
+    "version":  hb.get("firmware") or ((mdns or {}).get("txt") or {}).get("fw"),
     "note":     fw.get("note") or "",
-    "banner":   fw.get("banner"),
   },
   "daemon":    inner.get("daemon"),
   "transport": inner.get("transport"),
+  "device": {
+    # Heartbeat is the single source of truth for "is the device alive
+    # RIGHT NOW". Distinguishes "transport offline because daemon hasn't
+    # connected yet" from "transport offline because device is asleep".
+    "alive":             bool(hb.get("alive")),
+    "last_seen_seconds": hb.get("last_seen_seconds"),
+    "active_transport":  hb.get("active_transport"),
+    "battery_pct":       hb.get("battery_pct"),
+    "uptime":            hb.get("uptime"),
+  },
   "wifi": {
-    "provisioned": bool(mdns),
-    "ip":          (mdns or {}).get("ip"),
+    "provisioned": bool(mdns) or bool(hb.get("wifi_ip")),
+    "ip":          hb.get("wifi_ip") or (mdns or {}).get("ip"),
     "port":        (mdns or {}).get("port"),
-    "fw_via_mdns": ((mdns or {}).get("txt") or {}).get("fw"),
   },
   "interests": {
     "configured": icfg,

@@ -16,8 +16,10 @@ extern bool dispatchCmd(JsonDocument& doc);
 namespace {
 
 constexpr uint16_t kPort = 9880;
+constexpr uint16_t kDaemonPort = 9877;
 WiFiServer g_server(kPort);
 bool       g_started = false;
+char       g_daemonIp[16] = {0};   // populated from inbound peer IP
 
 // --- minimal HTTP parsing -----------------------------------------------
 
@@ -204,6 +206,14 @@ void handleFrame(WiFiClient& c, const String& path, size_t contentLen) {
 // --- main per-connection handler ----------------------------------------
 
 void handleClient(WiFiClient c) {
+    // Cache the daemon's IP so outbound paths (status_report / touch over
+    // Wi-Fi) know where to deliver. Only learn from real requests, not
+    // probes — but any HTTP hit from a peer is by definition the daemon
+    // since nothing else talks to us on this port.
+    IPAddress peer = c.remoteIP();
+    snprintf(g_daemonIp, sizeof(g_daemonIp), "%u.%u.%u.%u",
+             peer[0], peer[1], peer[2], peer[3]);
+
     // Parse request line: METHOD PATH HTTP/x.x
     String reqLine = readLine(c);
     if (reqLine.isEmpty()) { c.stop(); return; }
@@ -271,3 +281,28 @@ void httpServerPoll() {
 
 bool httpServerRunning() { return g_started; }
 uint16_t httpServerPort() { return kPort; }
+
+const char* httpDaemonIp() { return g_daemonIp; }
+
+bool httpPostJsonToDaemon(const char* path, const char* json) {
+    if (g_daemonIp[0] == 0 || !WiFi.isConnected()) return false;
+    WiFiClient c;
+    if (!c.connect(g_daemonIp, kDaemonPort)) return false;
+    size_t n = strlen(json);
+    c.printf("POST %s HTTP/1.1\r\n", path);
+    c.printf("Host: %s:%u\r\n", g_daemonIp, (unsigned)kDaemonPort);
+    c.print("Content-Type: application/json\r\n");
+    c.printf("Content-Length: %u\r\n", (unsigned)n);
+    c.print("Connection: close\r\n\r\n");
+    c.write((const uint8_t*)json, n);
+    // We don't care about the response body — daemon's reply only confirms
+    // dispatch. But we DO need to read it so the TCP close handshake
+    // completes cleanly (otherwise the daemon side may see a RST).
+    uint32_t deadline = millis() + 1500;
+    while (c.connected() && millis() < deadline) {
+        if (c.available()) c.read();
+        else delay(2);
+    }
+    c.stop();
+    return true;
+}

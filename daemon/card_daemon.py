@@ -347,6 +347,7 @@ def _telemetry_listener(line: str):
     for src, dst in mapping.items():
         if src in obj:
             DEVICE_TELEMETRY[dst] = obj[src]
+    DEVICE_TELEMETRY["last_status_seen_ms"] = int(time.time() * 1000)
     if "uptime_s" in obj:
         try:
             s = int(obj["uptime_s"])
@@ -363,6 +364,31 @@ def _telemetry_listener(line: str):
             DEVICE_TELEMETRY["_uptime_s_raw"] = s
         except (TypeError, ValueError):
             pass
+
+
+def _touch_event_listener(line: str):
+    """Firmware v0.9+ emits {event:touch, x, y, hold_ms} on the finger-up
+    edge of a tap. Map (x,y) to a VIEW_HOT_ZONES action and dispatch."""
+    try:
+        obj = json.loads(line.strip())
+    except Exception:
+        return
+    if not isinstance(obj, dict) or obj.get("event") != "touch":
+        return
+    try:
+        x, y = int(obj["x"]), int(obj["y"])
+    except (KeyError, TypeError, ValueError):
+        return
+    action = None
+    for hz in VIEW_HOT_ZONES:
+        x0, y0, x1, y1 = hz["rect"]
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            action = hz["action"]; break
+    if action is None:
+        log(f"[touch<] ({x},{y}) → no zone match")
+        return
+    log(f"[touch<] ({x},{y}) → {action}")
+    _internal_dispatch(action)
 
 
 def on_rx_byte(b: int):
@@ -634,18 +660,52 @@ def render_and_push_sleep():
     return True
 
 
+def _active_transport_label() -> "str | None":
+    """Which transport is currently delivering frames — accounts for arch C
+    where TRANSPORT is BLETransport but real pushes go via burst-wake Wi-Fi.
+    Priority: Wi-Fi (long-lived OR burst) > USB > BLE."""
+    if isinstance(TRANSPORT, WiFiTransport) and TRANSPORT.connected():
+        return "Wi-Fi"
+    if (DEVICE_TELEMETRY.get("wifi_connected")
+            and DEVICE_TELEMETRY.get("wifi_ip")
+            and _device_seen_seconds_ago() <= 120):
+        return "Wi-Fi"
+    if isinstance(TRANSPORT, SerialTransport) and TRANSPORT.connected():
+        return "USB"
+    if isinstance(TRANSPORT, BLETransport) and TRANSPORT.connected():
+        return "BLE"
+    return None
+
+
+def _device_seen_seconds_ago() -> float:
+    """How long since the device last spoke (status_report / touch / ack).
+    inf means we never heard from it this daemon session."""
+    last_ms = DEVICE_TELEMETRY.get("last_status_seen_ms") or 0
+    if not last_ms:
+        return float("inf")
+    return max(0.0, time.time() - last_ms / 1000.0)
+
+
+def _device_alive(threshold_s: float = 90.0) -> bool:
+    """Device is 'alive' if it reported within the last threshold_s (default
+    90s — slightly longer than the firmware's 60s status_report cadence)."""
+    return _device_seen_seconds_ago() <= threshold_s
+
+
 def _bar_status() -> dict:
     """Build the bottom-bar status payload at render time."""
     age = None
     if _FRAME_LAST_PUSH > 0:
         age = int(time.time() - _FRAME_LAST_PUSH)
     return {
-        "transport":  type(TRANSPORT).__name__.replace("Transport", "").upper()
-                       if TRANSPORT else None,
+        "transport":  _active_transport_label(),
         "ble_paired": False,   # firmware doesn't report this yet (v0.6.4 TODO)
         "battery_pct": DEVICE_TELEMETRY.get("battery_pct"),
         "time":       datetime.now().strftime("%H:%M"),
         "frame_age":  age,
+        "device_alive": _device_alive(),
+        "last_seen_s": int(_device_seen_seconds_ago())
+                        if _device_seen_seconds_ago() != float("inf") else None,
     }
 
 
@@ -790,7 +850,10 @@ def render_and_push():
         else:
             img = card_render.render_image(_widget_snapshot(),
                                            status=_bar_status())
-            VIEW_HOT_ZONES = []
+            # Widget view: only the bottom-bar chips (睡眠 / 设置) are
+            # tappable. The renderer populates LAST_BOTTOM_BAR_HOT_ZONES
+            # during paint_bottom_bar — copy out here.
+            VIEW_HOT_ZONES = card_render.get_bottom_bar_hot_zones()
     except Exception as e:
         log(f"[render] failed: {e!r}")
         return
@@ -891,6 +954,24 @@ class CardHandler(BaseHTTPRequestHandler):
             })
         if path == "/version":
             return self._reply(200, {"daemon": "ai-desk-card/0.5"})
+        if path == "/heartbeat":
+            # v0.9: cheap liveness check for state.sh / SKILL routing.
+            # Aggregates everything we know about whether the device is
+            # actually reachable RIGHT NOW (vs. "transport was picked at
+            # startup but we never heard back").
+            seen_s = _device_seen_seconds_ago()
+            return self._reply(200, {
+                "alive":              _device_alive(),
+                "last_seen_seconds":  int(seen_s) if seen_s != float("inf") else None,
+                "active_transport":   _active_transport_label(),
+                "transport_picked":   type(TRANSPORT).__name__ if TRANSPORT else None,
+                "transport_connected": TRANSPORT is not None and TRANSPORT.connected(),
+                "battery_pct":        DEVICE_TELEMETRY.get("battery_pct"),
+                "uptime":             DEVICE_TELEMETRY.get("uptime"),
+                "firmware":           DEVICE_TELEMETRY.get("firmware"),
+                "wifi_connected":     DEVICE_TELEMETRY.get("wifi_connected"),
+                "wifi_ip":            DEVICE_TELEMETRY.get("wifi_ip"),
+            })
         return self._reply(404, {"error": f"unknown GET {path!r}"})
 
     def do_DELETE(self):
@@ -991,7 +1072,16 @@ class CardHandler(BaseHTTPRequestHandler):
             # Firmware v0.6.4 reports {battery_pct, battery_mv, firmware,
             # mac, uptime_s} every ~60s. We store the latest in
             # DEVICE_TELEMETRY for the settings page + bottom bar.
+            # v0.9: also accept this over HTTP (arch A has no Serial/BLE
+            # backchannel), and any incoming report counts as proof of life
+            # for /heartbeat.
+            DEVICE_TELEMETRY["last_status_seen_ms"] = int(time.time() * 1000)
             try:
+                # Pass through Wi-Fi fields too — firmware sends them as
+                # top-level keys (wifi_connected, wifi_ip, wifi_ssid, wifi_rssi).
+                for k in ("wifi_connected", "wifi_ssid", "wifi_ip", "wifi_rssi", "on_usb"):
+                    if k in payload:
+                        DEVICE_TELEMETRY[k] = payload[k]
                 if "battery_pct" in payload: DEVICE_TELEMETRY["battery_pct"] = int(payload["battery_pct"])
                 if "battery_mv"  in payload: DEVICE_TELEMETRY["battery_mv"]  = int(payload["battery_mv"])
                 if "firmware"    in payload: DEVICE_TELEMETRY["firmware"]    = str(payload["firmware"])[:32]
@@ -1075,6 +1165,9 @@ class CardHandler(BaseHTTPRequestHandler):
         if path == "/touch":
             # Firmware v0.6.4: device sends {x, y} from touch panel; daemon
             # maps to a hot-zone action against the last rendered view.
+            # A touch is also proof of life — update last_seen so the
+            # heartbeat reflects "the device is interactive right now".
+            DEVICE_TELEMETRY["last_status_seen_ms"] = int(time.time() * 1000)
             try:
                 x, y = int(payload["x"]), int(payload["y"])
             except (KeyError, TypeError, ValueError):
@@ -1121,6 +1214,86 @@ def _internal_dispatch(action: str) -> dict:
 
 
 # ---- Periodic re-push (for widget freshness while idle) ----
+
+INTERESTS_PATH = os.path.expanduser("~/.ai-desk-card/interests.yaml")
+
+
+def _read_quiet_hours() -> "dict | None":
+    """Parse the quiet_hours block out of interests.yaml without pulling
+    a YAML dependency. Returns {enabled, start, end} or None if the file
+    or section is missing.
+
+    Only the leaf fields we need are parsed — full nested YAML is not
+    required since users edit this file by hand and the shape is fixed."""
+    try:
+        with open(INTERESTS_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    in_block = False
+    block_indent = -1
+    out: dict = {}
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if not in_block:
+            if stripped.startswith("quiet_hours:"):
+                in_block = True
+                block_indent = indent
+            continue
+        # in block; out as soon as we see same-or-less indent that isn't blank
+        if indent <= block_indent:
+            break
+        if ":" in stripped:
+            k, _, v = stripped.partition(":")
+            v = v.strip().strip('"').strip("'")
+            k = k.strip()
+            if k == "enabled":
+                out["enabled"] = v.lower() == "true"
+            elif k in ("start", "end"):
+                out[k] = v
+    return out if out else None
+
+
+def _quiet_hours_loop():
+    """Background watcher: when wall-clock crosses interests.yaml's
+    quiet_hours.start, push the business-card frame + put the device to
+    deep sleep. Fires at most once per calendar day."""
+    last_fired_date = ""
+    while True:
+        time.sleep(45)   # cheap enough; resolution well within the 1-min start
+        qh = _read_quiet_hours()
+        if not qh or not qh.get("enabled"):
+            continue
+        start = qh.get("start") or ""
+        if len(start) != 5 or start[2] != ":":
+            continue
+        try:
+            sh, sm = int(start[:2]), int(start[3:])
+        except ValueError:
+            continue
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        if last_fired_date == today:
+            continue
+        # Fire when current time is within the first 2 minutes after start.
+        # Wider window than the 45s loop so we don't miss the boundary if
+        # the loop slept slightly out of phase.
+        delta = (now.hour - sh) * 60 + (now.minute - sm)
+        if 0 <= delta <= 2:
+            if not _device_alive():
+                log(f"[quiet_hours] {start} reached but device offline — "
+                    f"skipping auto-sleep")
+                last_fired_date = today    # don't keep retrying within window
+                continue
+            log(f"[quiet_hours] {start} reached — auto-sleep (push name card)")
+            _internal_dispatch("sleep")
+            last_fired_date = today
+
 
 def keepalive_loop():
     """Re-push the current frame every 5 minutes as a safety net (in case
@@ -1226,9 +1399,11 @@ def main():
     _load_widget_cache()
     _load_persisted_frame()
     add_rx_listener(_telemetry_listener)
+    add_rx_listener(_touch_event_listener)
     TRANSPORT.start(on_rx_byte, on_connect=_handshake)
     threading.Thread(target=keepalive_loop, daemon=True).start()
     threading.Thread(target=push_loop, daemon=True).start()
+    threading.Thread(target=_quiet_hours_loop, daemon=True).start()
     if isinstance(TRANSPORT, BLETransport):
         # Architecture C: only relevant when BLE is the long-lived
         # transport. USB and Wi-Fi don't have anything to power down.

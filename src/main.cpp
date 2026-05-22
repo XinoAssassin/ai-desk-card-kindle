@@ -113,6 +113,55 @@ static void emitStatusReport() {
     if (n > 0) {
         Serial.print(buf);
         bleWrite((const uint8_t*)buf, (size_t)n);
+        // v0.9: arch A (Wi-Fi only) has no Serial/BLE listener on the
+        // daemon. Also POST over Wi-Fi when we know the daemon IP.
+        if (wifi && httpDaemonIp()[0] != 0) {
+            httpPostJsonToDaemon("/status_report", buf);
+        }
+    }
+}
+
+// Touch poll. Detects single-tap (finger down → up within 30-2000 ms) and
+// emits one JSON line per tap. Daemon's RX listener maps (x,y) to chip
+// actions via VIEW_HOT_ZONES (back / settings / refresh / sleep / restart).
+static void pollTouchAndEmit() {
+    static bool s_was_down = false;
+    static uint16_t s_x = 0, s_y = 0;
+    static uint32_t s_down_ms = 0;
+
+    M5.TP.update();
+    if (!M5.TP.available()) return;
+    M5.TP.flush();   // clear interrupt latch so next sample is fresh
+
+    bool down = !M5.TP.isFingerUp();
+    if (down && M5.TP.getFingerNum() > 0) {
+        tp_finger_t f = M5.TP.readFinger(0);
+        s_x = f.x; s_y = f.y;
+        if (!s_was_down) s_down_ms = millis();
+        s_was_down = true;
+    } else if (!down && s_was_down) {
+        s_was_down = false;
+        uint32_t hold = millis() - s_down_ms;
+        if (hold < 30 || hold > 2000) return;       // glitch or long-press
+        char buf[96];
+        // Two payload shapes: line-form for serial/BLE (newline-delimited),
+        // dict-form for HTTP (no trailing newline). Build the dict body
+        // first, then the line-form is just body + '\n'.
+        int n = snprintf(buf, sizeof(buf),
+            "{\"x\":%u,\"y\":%u,\"hold_ms\":%lu}",
+            (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
+        if (n > 0) {
+            char line[128];
+            int ln = snprintf(line, sizeof(line),
+                              "{\"event\":\"touch\",\"x\":%u,\"y\":%u,"
+                              "\"hold_ms\":%lu}\n",
+                              (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
+            Serial.print(line);
+            bleWrite((const uint8_t*)line, (size_t)ln);
+            if (wifiConnected() && httpDaemonIp()[0] != 0) {
+                httpPostJsonToDaemon("/touch", buf);
+            }
+        }
     }
 }
 
@@ -428,6 +477,7 @@ void loop() {
     cardPollSerial();    // drains serial / BLE, dispatches commands
     wifiPoll();          // drives reconnect retries
     httpServerPoll();    // accepts inbound HTTP connections (one at a time)
+    pollTouchAndEmit();  // bottom-bar 睡眠 / 设置 chip taps go up to daemon
 
     // v0.8: power-mode tracking. If user plugs in USB while we were on
     // battery (radio off), bring Wi-Fi back up automatically. If they

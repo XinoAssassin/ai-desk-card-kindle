@@ -46,6 +46,14 @@ SLOT_RECTS = {
 BOTTOM_BAR_Y = 900
 BOTTOM_BAR_H = 60
 
+# Set by paint_bottom_bar() on every render. Daemon's touch dispatcher
+# reads via get_bottom_bar_hot_zones() so finger taps map to actions.
+# Shape: [{"rect": (x0,y0,x1,y1), "action": "sleep"|"settings"|...}]
+LAST_BOTTOM_BAR_HOT_ZONES: list = []
+
+def get_bottom_bar_hot_zones() -> list:
+    return list(LAST_BOTTOM_BAR_HOT_ZONES)
+
 # ---- font ---------------------------------------------------------------
 
 # Try macOS system fonts first (PingFang has CJK + Latin-1 + box drawing).
@@ -878,9 +886,16 @@ def paint_bottom_bar(d: "ImageDraw.ImageDraw", status: dict):
         pieces.append(("--%", False))
     else:
         pieces.append((f"{bp}%", bp <= 20))   # bold + caller-visible if low
-    t = status.get("transport")
-    if t:
-        pieces.append((t, False))
+    # v0.9: if device hasn't reported in >90s, the transport label is
+    # misleading — show OFFLINE in bold instead so user can tell at a
+    # glance whether the device is actually alive.
+    alive = status.get("device_alive", True)
+    if not alive:
+        pieces.append(("OFFLINE", True))
+    else:
+        t = status.get("transport")
+        if t:
+            pieces.append((t, False))
     # v0.7: removed live frame_age display from the bar — it shifted on
     # every push and broke the dirty-region diff (bottom bar always different
     # → bbox stretched to full canvas → 50% threshold → full re-push). The
@@ -897,23 +912,35 @@ def paint_bottom_bar(d: "ImageDraw.ImageDraw", status: dict):
         cx += d.textlength(text, font=fnt) + 14
 
     # ---- RIGHT zone: sleep + settings chips ----
-    actions = ["睡眠", "设置"]
+    # Touch hot zones rebuilt from scratch every render so width changes
+    # (e.g., bold-vs-regular font swap) don't strand stale rects.
+    global LAST_BOTTOM_BAR_HOT_ZONES
+    LAST_BOTTOM_BAR_HOT_ZONES = []
+
+    actions = [("睡眠", "sleep"), ("设置", "settings")]
     chip_pad = 20
     sep_w = 14
-    total_w = sum(d.textlength(a, font=f_b) for a in actions) \
+    total_w = sum(d.textlength(lbl, font=f_b) for lbl, _ in actions) \
             + chip_pad * 2 * len(actions) \
             + sep_w * (len(actions) - 1)
     chip_x = CANVAS_W - pad - total_w
     if chip_x < cx + 16:
         return   # left + right would collide; safer to skip right zone
 
-    for i, label in enumerate(actions):
+    for i, (label, action) in enumerate(actions):
         if i > 0:
             d.line((chip_x, bar_y + 14, chip_x, bar_y + bar_h - 14),
                    fill=140, width=1)
             chip_x += sep_w
         d.text((chip_x + chip_pad, text_y), label, fill=255, font=f_b)
-        chip_x += d.textlength(label, font=f_b) + chip_pad * 2
+        chip_w = int(d.textlength(label, font=f_b)) + chip_pad * 2
+        # Whole-bar-height tap target so users don't need to land inside the
+        # text — chip rect spans full BOTTOM_BAR_H, not just the text band.
+        LAST_BOTTOM_BAR_HOT_ZONES.append({
+            "rect":   (chip_x, bar_y, chip_x + chip_w, bar_y + bar_h),
+            "action": action,
+        })
+        chip_x += chip_w
 
 
 def render_image(widget_snapshot: Iterable[dict],

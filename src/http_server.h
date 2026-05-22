@@ -22,3 +22,10 @@ void httpServerStop();            // call when Wi-Fi goes down (battery mode)
 void httpServerPoll();             // call in loop(); no-op if not started
 bool httpServerRunning();
 uint16_t httpServerPort();        // 9880 by default
+
+// v0.9: outbound side. Pure ARCH A (Wi-Fi only) has no Serial/BLE backchannel,
+// so the device must POST telemetry / touch events back to the daemon over
+// Wi-Fi. The daemon IP is auto-discovered from the most recent inbound
+// /frame or /cmd request.
+const char* httpDaemonIp();                                 // "" if unknown
+bool httpPostJsonToDaemon(const char* path, const char* json);
