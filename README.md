@@ -18,6 +18,25 @@ For the why-this-exists and the architecture in detail, see
 [PRODUCT.md](PRODUCT.md). For how each piece is wired, see
 [HANDOVER.md](HANDOVER.md).
 
+## How AI agents drive this
+
+The repo IS a Skill. Any AI agent that supports the Claude-style Skill
+format reads [`SKILL.md`](SKILL.md) and routes through these sub-flows:
+
+| Flow | When |
+|---|---|
+| [01_install](flows/01_install.md) | Zero state — flash firmware, install daemon |
+| [02_transport](flows/02_transport.md) | Daemon up but can't reach device |
+| [03_wifi](flows/03_wifi.md) | Provision Wi-Fi credentials |
+| [04_interests](flows/04_interests.md) | First-time "what do you want on your card" |
+| [05_push](flows/05_push.md) | Hot path — push a widget |
+| [06_schedule](flows/06_schedule.md) | Set up recurring auto-refresh |
+| [07_sleep](flows/07_sleep.md) | Business card + deep-sleep |
+
+The agent calls `bash scripts/state.sh` to detect current state, then
+walks the routing table in `SKILL.md`. Claude Code users can also use
+the slash commands under `plugin/commands/` — same underlying scripts.
+
 ---
 
 ## Supported hardware
