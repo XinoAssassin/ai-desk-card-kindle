@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import urllib.request
@@ -105,23 +106,78 @@ def post_frame(ip: str, img, port: int = 9880,
     return {"status": r.status, "resp": resp}
 
 
+def demo_widgets_image():
+    """Render the 4-widget schedule demo (used in walkthrough videos)
+    via the Color renderer. Pulls in card_render_color from daemon/."""
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location(
+        "card_render_color",
+        os.path.join(here, "..", "daemon", "card_render_color.py"))
+    crc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(crc)
+
+    widgets = [
+        {"slot": "top-left", "type": "weather", "data": {
+            "location": "北京",
+            "current":  {"temp_c": 23, "condition": "晴"},
+            "forecast": [
+                {"day": "明天", "high": 25, "low": 14, "condition": "晴"},
+                {"day": "后天", "high": 21, "low": 12, "condition": "多云"},
+            ],
+        }},
+        {"slot": "top-right", "type": "next-meeting", "data": {
+            "title": "v0.10 color review",
+            "start_in": "in 18m",
+            "start_at": "20:00",
+            "attendees": "Cindy · Mark · Liang",
+            "location": "Zoom",
+        }},
+        {"slot": "bottom-left", "type": "focus", "data": {
+            "task": "整 ai-desk-card · paper-color port",
+            "big_text": "07:24",
+            "subtitle": "started 19:18 · 25 min planned",
+            "pomodoros_done": 2,
+            "pomodoros_planned": 4,
+        }},
+        {"slot": "bottom-right", "type": "todo", "data": {
+            "title": "今天",
+            "items": [
+                {"text": "Paper Color phase 3 完成", "tag": "today"},
+                {"text": "录制双设备 demo 视频", "tag": "today"},
+                {"text": "v0.10 release notes", "tag": "tomorrow"},
+            ],
+        }},
+    ]
+    status = {"battery_pct": 95, "wifi": "Xiaomi_1303", "time": time.strftime("%H:%M")}
+    return crc.render_image(widgets, status=status)
+
+
 def main():
+    import os
     ap = argparse.ArgumentParser()
     ap.add_argument("--ip", required=True, help="Device IP (e.g. 192.168.31.162)")
     ap.add_argument("--port", type=int, default=9880)
-    ap.add_argument("--test", choices=["stripes"], help="Test pattern to push")
-    ap.add_argument("--image", help="Path to PNG/JPG to push (auto-resized to 600x400)")
+    ap.add_argument("--test", choices=["stripes", "demo"], help="Built-in pattern")
+    ap.add_argument("--image", help="Path to PNG/JPG to push (auto-resized to 600×400)")
+    ap.add_argument("--save", help="Save the rendered image locally before pushing")
     args = ap.parse_args()
 
     if args.test == "stripes":
         img = test_stripes_image()
+    elif args.test == "demo":
+        img = demo_widgets_image()
     elif args.image:
         from PIL import Image
         img = Image.open(args.image).convert("RGB")
         if img.size != (PANEL_W, PANEL_H):
             img = img.resize((PANEL_W, PANEL_H))
     else:
-        sys.exit("--test or --image required")
+        sys.exit("--test {stripes,demo} or --image required")
+
+    if args.save:
+        img.save(args.save)
+        print(f"[host] saved render to {args.save}")
 
     post_frame(args.ip, img, args.port)
 
