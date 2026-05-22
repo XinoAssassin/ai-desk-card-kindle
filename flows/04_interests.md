@@ -35,13 +35,16 @@ Write this shape (replace based on user input):
 # to know what to push.
 version: 1
 
-# What lives in each slot (0..3). Use widget type names; data is fetched
-# at push-time by the agent.
+# What lives in each slot. Slot names are strings; the layout is 2-1-1:
+#   top-left (270x280)  | top-right (270x280)
+#   middle (540x340, full-width band)
+#   bottom (540x280, full-width band)
+# (There is also "full" but it takes over the whole screen.)
 slots:
-  0: weather       # top-left
-  1: calendar      # top-right
-  2: todo          # bottom-left
-  3: inbox         # bottom-right
+  top-left:  weather
+  top-right: calendar
+  middle:    todo
+  bottom:    inbox
 
 # How often to refresh. Agent honors this when self-scheduling.
 schedule:

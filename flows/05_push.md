@@ -31,7 +31,15 @@ can be strict (e.g., `temp_c` must be int, not float).
 
 ## Step 2 — Pick the slot
 
-The card has a 4-slot grid (0=TL, 1=TR, 2=BL, 3=BR).
+The card uses a **2-1-1 layout, slot names are strings**:
+
+| Slot | Size | Position |
+|---|---|---|
+| `top-left` | 270×280 | top-left quarter |
+| `top-right` | 270×280 | top-right quarter |
+| `middle` | 540×340 | full-width middle band |
+| `bottom` | 540×280 | full-width bottom band |
+| `full` | 540×960 | the entire screen (overrides the others) |
 
 ```bash
 # See what's currently in each slot:
@@ -42,9 +50,12 @@ Heuristics:
 - If `~/.ai-desk-card/interests.yaml` exists and the user's intent
   matches a slot mapping, **use that slot** (overwrites the previous
   data of the same type).
-- Otherwise pick the first empty slot (0 → 1 → 2 → 3).
+- Otherwise pick the first empty slot (top-left → top-right → middle →
+  bottom).
 - If all 4 are occupied AND the user didn't say which to replace, ASK
   before overwriting.
+- Use `full` only for splash / business-card / single-purpose displays
+  — it hides everything else.
 
 ## Step 3 — Push
 

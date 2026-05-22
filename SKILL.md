@@ -96,15 +96,16 @@ curl -sf -X POST "${CARD_DAEMON_URL:-http://127.0.0.1:9877}/widget" \
   -H 'Content-Type: application/json' \
   -d @- <<'JSON'
 {
-  "slot": 0,
+  "slot": "top-left",
   "type": "weather",
   "data": { "city": "Beijing", "temp_c": 22, "icon": "sun", "summary": "晴" }
 }
 JSON
 ```
 
-- **slot**: 0–3 (the card has a 4-slot grid). Reuse the same slot to
-  replace; pick an empty slot to add.
+- **slot**: string. Layout is 2-1-1 not 2x2 —
+  `top-left` (270×280) · `top-right` (270×280) · `middle` (540×340) ·
+  `bottom` (540×280) · `full` (540×960, takes over the whole screen).
 - **type**: one of 16 — see `plugin/skills/card-widget/schemas/` for full
   JSON schemas with examples.
 - Wi-Fi: response in ~0.2 s. USB: 1–32 s. BLE frame-data: broken — small
