@@ -70,12 +70,19 @@ ports = inner.get("serial_ports") or []
 fw    = inner.get("firmware") or {}
 mdns  = inner.get("mdns_peer")
 
-# flashed: heartbeat is the strongest signal (device just spoke).
-# Then mDNS visibility (device is up + on Wi-Fi). Then probe ack.
+# flashed: any of these confirms the device has our firmware on it,
+# even if it's currently asleep (heartbeat.alive=false but daemon
+# remembers the last-seen firmware version + uptime).
+#   1. heartbeat reports firmware version (DEVICE_TELEMETRY persists
+#      across device sleep cycles within one daemon run)
+#   2. live ack (firmware-probe sees us)
+#   3. heartbeat says alive right now
+#   4. mDNS sees the device advertising
 # Banner alone isn't enough — install_firmware --detect can yield
 # "unknown" even when no device is present.
-flashed = (bool(hb.get("alive"))
+flashed = (bool(hb.get("firmware"))
            or bool(fw.get("our"))
+           or bool(hb.get("alive"))
            or bool(mdns))
 
 state = {
@@ -86,7 +93,7 @@ state = {
   },
   "firmware": {
     "flashed":  flashed,
-    "ours":     bool(fw.get("our")) or bool(hb.get("alive")),
+    "ours":     bool(fw.get("our")) or bool(hb.get("firmware")),
     "version":  hb.get("firmware") or ((mdns or {}).get("txt") or {}).get("fw"),
     "note":     fw.get("note") or "",
   },
