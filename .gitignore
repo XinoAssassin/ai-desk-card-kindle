@@ -1,10 +1,16 @@
-.pio/
-.vscode/
 .DS_Store
+.pio/
+.pioenvs/
+.piolibdeps/
 __pycache__/
 *.pyc
-# Upstream ignored data/ entirely for personal GIF pet packs. The Paper
-# build ships a required CJK font file at data/cjk.ttf, so keep data/
-# tracked and only ignore scratch subfolders.
-data/characters/
-data/.tmp/
+*.pyo
+.vscode/
+.idea/
+.env
+.envrc
+node_modules/
+build/
+dist/
+*.log
+*.tmp

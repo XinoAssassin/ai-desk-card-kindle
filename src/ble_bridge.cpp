@@ -15,9 +15,12 @@
 #define NUS_TX_UUID      "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
 // Incoming bytes are buffered in a simple ring for bleRead()/bleAvailable().
-// Sized to hold a transcript snapshot JSON plus headroom; the GATT layer
-// will flow-control if we fall behind.
-static const size_t RX_CAP = 2048;
+// Sized for v0.6 server-side rendering: a single frame_chunk JSON line is
+// ~2.7 KB (2 KB raw → base64 + JSON wrapper), and on BLE that's delivered
+// as ~15 MTU-sized writes in quick succession. Must outpace the main-loop
+// poll cadence. 2 KB was too small — frame_chunk bytes dropped silently;
+// device's frame_begin parse never fired. 16 KB gives 6× headroom.
+static const size_t RX_CAP = 16384;
 static uint8_t  rxBuf[RX_CAP];
 static volatile size_t rxHead = 0;
 static volatile size_t rxTail = 0;
@@ -103,16 +106,22 @@ void bleInit(const char* deviceName) {
     NUS_TX_UUID,
     BLECharacteristic::PROPERTY_NOTIFY
   );
-  txChar->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED);
+  // v0.7: tightened from ENC → ENC_MITM. Our auth mode is
+  // ESP_LE_AUTH_REQ_SC_MITM_BOND, so bonded clients have MITM keys.
+  // Using ENC_MITM perms makes the permission check match the bond's
+  // capability — a previous mismatch (ENC perm + MITM bond) was a
+  // candidate for the silent-drop bug where daemon's write_gatt_char
+  // ACKd but RxCallbacks::onWrite never fired.
+  txChar->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
   BLE2902* cccd = new BLE2902();
-  cccd->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+  cccd->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
   txChar->addDescriptor(cccd);
 
   rxChar = svc->createCharacteristic(
     NUS_RX_UUID,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
-  rxChar->setAccessPermissions(ESP_GATT_PERM_WRITE_ENCRYPTED);
+  rxChar->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
   rxChar->setCallbacks(new RxCallbacks());
 
   svc->start();
@@ -129,6 +138,23 @@ void bleInit(const char* deviceName) {
   adv->setScanResponse(true);
   adv->setMinPreferred(0x06);   // iOS-friendly connection interval
   adv->setMaxPreferred(0x12);
+
+  // CRITICAL: BLEDevice::init(name) only writes the GAP name; the actual
+  // ADV/scan-response packet's "complete local name" field is left to the
+  // BT stack's default which is *cached in NVS across firmware reflash*.
+  // If this device previously ran another firmware with a different BLE
+  // name, the cached scan response still uses the old name even after we
+  // flash card firmware that calls init("Card-..."). Force an explicit
+  // advertisement payload with the correct name to override the cache.
+  BLEAdvertisementData advData;
+  advData.setFlags(0x06);                       // BR/EDR not supported + LE general discoverable
+  advData.setCompleteServices(BLEUUID(NUS_SERVICE_UUID));
+  adv->setAdvertisementData(advData);
+
+  BLEAdvertisementData scanRsp;
+  scanRsp.setName(deviceName);                  // ← this is what fixes the wrong-name bug
+  adv->setScanResponseData(scanRsp);
+
   BLEDevice::startAdvertising();
   Serial.printf("[ble] advertising as '%s'\n", deviceName);
 }

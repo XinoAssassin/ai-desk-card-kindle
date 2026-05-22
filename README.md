@@ -1,233 +1,457 @@
-# m5-paper-buddy
+# AI Desk Card
 
-<p align="center">
-  <a href="README.md"><b>中文</b></a> · <a href="README.en.md">English</a>
-</p>
+A glanceable e-ink 副屏 driven by an AI agent. The M5Paper sits next to
+your monitor and shows weather, todos, today's calendar, message previews,
+PR queue, current focus task, and the running AI session's status. Data
+is pushed by an AI agent through a plugin Skill; the device just renders.
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/49a543f3-ad1a-4735-a5d1-ef98867cff1e" alt="m5-paper-buddy on an M5Paper V1.1" width="540">
-</p>
+Designed for: **Wi-Fi LAN push (0.2 s/frame) · battery-powered standby
+(months of life) · USB-C optional · zero cloud dependency**.
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/hardware-M5Paper%20V1.1-orange" alt="M5Paper">
-  <img src="https://img.shields.io/badge/firmware-ESP32%20%2B%20PlatformIO-brightgreen" alt="ESP32">
-  <img src="https://img.shields.io/badge/daemon-Python%203-yellow" alt="Python">
-  <img src="https://img.shields.io/badge/integration-Claude%20Code%20Plugin-7F52FF" alt="Claude Code">
-  <img src="https://img.shields.io/badge/i18n-EN%20%2F%20中文-lightgrey" alt="i18n">
-</p>
+```
+You ──ask──▶ AI agent ──push──▶ Skill ──HTTP──▶ daemon ──Wi-Fi / USB / BLE──▶ M5Paper
+                                                                                │
+                                                                                └──▶ 16 widgets across a 4-slot grid
+```
 
-<p align="center"><b>把 M5Paper 变成 Claude Code 的物理桌面搭档</b></p>
-
----
-
-## ✨ 简介
-
-用一块 **M5Paper V1.1**（4.7" 电子墨水屏 / 540×960 / GT911 触摸 / ESP32）做你的 Claude Code 伴侣屏。开着多个 Claude Code 窗口的时候，这块墨水屏会**实时镜像**每个 session 的项目、分支、上下文占用、最新回复和活动日志。Claude 要调用工具时，完整的命令 / diff / 内容会**全屏弹出**等你在**硬件按键**或**触屏**上确认。
+For the why-this-exists and the architecture in detail, see
+[PRODUCT.md](PRODUCT.md). For how each piece is wired, see
+[HANDOVER.md](HANDOVER.md).
 
 ---
 
-## 🎛️ 功能
+## Supported hardware
 
-| | |
-| --- | --- |
-| 📊 **多会话 Dashboard** | 左列显示所有在跑的 Claude Code 窗口，点一下切换 focus；右列显示 model + 上下文窗口占用进度条 |
-| 🔐 **硬件审批** | `PreToolUse` 全屏审批卡，完整显示 Bash 命令 / Edit diff / Write 预览。PUSH 同意、DOWN 拒绝；DND 模式（长按 UP）自动批准 |
-| 💬 **触屏回答** | `AskUserQuestion` 最多 4 个选项做成**大按钮**，点一下选项 label 直接回传给 Claude |
-| 🔁 **FIFO 队列** | 多个窗口同时请求审批时，一次弹一个，当前处理完自动弹下一个 |
-| 🀄 **中英双语** | 内置 3.4MB CJK TTF，UI 支持 EN / 中文 切换（设置页里点）；所有 prompt / 回复 / 活动都能显示中文 |
-| 🔌 **双 Transport** | USB 串口（默认、零配置）或 BLE（Nordic UART、macOS 配对 passkey），自动选择 |
-| ⚙️ **设置页** | 右上角点 `SETTINGS` / `设置`，查看 transport、电量、会话数、DND、预算、运行时长、最后消息 |
-| 🐱 **猫伙伴** | 底部一只 ASCII 猫跟状态变化表情（idle/busy/attention/celebrate/DND/sleep） |
-| 🔌 **Claude Code 插件** | 一条 `/buddy-install` 搞定 PlatformIO + Python 依赖 + mklittlefs 架构补丁 + hooks 合并 + 固件/字体刷录 + daemon 后台启动 |
+| Device | Status | Notes |
+|---|---|---|
+| **M5Paper V1.1** | ✅ Primary target — fully tested | 4.7-inch 540×960 e-ink, ESP32, 8 MB PSRAM, 16 MB flash, 1150 mAh, USB-C, Wi-Fi 2.4 GHz, BLE 4.2. About ¥600 / $90. |
+| M5Paper V1.0 | 🟡 Likely works | Same SoC + panel; battery voltage detection threshold (`4150 mV` in `src/main.cpp`) may need tuning. Not tested in-house. |
+| M5Paper S3 | 🟡 Probably needs porting | New ESP32-S3 variant; BLE stack differs (NimBLE default). About 1-2 days of porting. |
+| Other ESP32 + e-ink boards | ❌ Not supported | Inkplate / Waveshare / etc. would need a different panel driver. Roadmap item. |
+
+You also need:
+
+- A USB-C data cable (only needed once to flash firmware)
+- Optional: USB-C charger if you want always-on Wi-Fi mode
+
+## Supported AI agents
+
+The plugin is **agent-agnostic** — it works with any AI CLI that supports
+the plugin spec used by Claude Code (commands + scripts + skills layout).
+Tested or likely-compatible:
+
+| Agent | Status |
+|---|---|
+| **Claude Code** | ✅ Primary target — plugin format is from here |
+| Codex CLI | 🟡 Same plugin shape; should work with minor variation in how slash commands route |
+| Gemini CLI | 🟡 Likely works |
+| Aider | 🟡 Likely works (config flag for slash-command routing) |
+| Your own CLI | If it accepts a `plugin/` directory with the same shape, yes |
+
+For the cron-driven auto-refresh, the script auto-detects whichever AI
+CLI is on `$PATH` (`claude`, `codex`, `gemini`, `aider`) or honors
+`$AI_CLI=<binary>` if you want to pin one. See
+[plugin/skills/card-refresh/REFRESH.md](plugin/skills/card-refresh/REFRESH.md).
 
 ---
 
-## 🛠️ 硬件
+## Installation
 
-- **M5Paper V1.1**（4.7" 电子墨水屏、540×960、GT911 电容触摸、ESP32、16MB Flash）
-- 一条 USB-C 线（初次烧录必须，之后可以换 BLE）
+### Prerequisites
 
----
+- macOS (Linux untested) or Windows via WSL2
+- [PlatformIO](https://platformio.org) (install via `pipx install platformio`
+  or VS Code extension)
+- Python 3.10+ — needed for the BLE path; PlatformIO ships a 3.14 that the
+  daemon's `start.sh` auto-picks if present
+- One of: Claude Code, Codex CLI, Gemini CLI, or Aider installed
 
-## 🚀 快速开始
+### Step 1 — Buy the hardware
 
-**前置**：[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/)、Homebrew（Apple Silicon 下装 `mklittlefs` 用）、一台 M5Paper V1.1。
+Get an M5Paper V1.1 ($90 from M5Stack official store, Amazon, or
+AliExpress). Comes with a USB-C cable; if not, any USB-C **data** cable
+(not a power-only cable) will do.
+
+### Step 2 — Clone + flash firmware
 
 ```bash
-# 克隆
-git clone https://github.com/op7418/m5-paper-buddy.git
-cd m5-paper-buddy
+git clone https://github.com/op7418/ai-desk-card.git
+cd ai-desk-card
 
-# 作为 Claude Code 插件安装（推荐）
-# 把本仓库 plugin/ 目录加到 Claude Code 的 plugin 路径下，然后：
-/buddy-install
+# Build the firmware
+pio run -e card
+
+# One-time: flash the CJK font to LittleFS partition
+pio run -e card -t uploadfs
+
+# Flash firmware
+pio run -e card -t upload
 ```
 
-`/buddy-install` 会自动：
+Total time ~1 minute. After upload the device reboots and shows a
+"waiting for daemon..." splash with the firmware version on it.
 
-1. 验证 PlatformIO 已装
-2. 装 Python 依赖（`pyserial`、BLE 模式额外装 `bleak`）
-3. Apple Silicon 下**自动修复** PlatformIO 自带 x86_64 `mklittlefs`（`brew install mklittlefs` + symlink）
-4. 把 hook 配置合并进 `~/.claude/settings.json`（自动备份原文件）
-5. 如果 Paper 已插 USB，**刷 firmware + 字体**
-6. 后台启动 daemon
+### Step 3 — Install the plugin
 
-**手工模式（不走插件）**：
+The `plugin/` directory at the root of this repo IS the plugin.
+Install it into your AI CLI:
+
+**Option A — symlink (recommended for development)**:
 
 ```bash
-pio run -e m5paper -t uploadfs          # 刷字体进 LittleFS（~90s）
-pio run -e m5paper -t upload            # 刷固件（~30s）
-python3 tools/claude_code_bridge.py --budget 200000
+# Claude Code
+ln -s "$(pwd)/plugin" ~/.claude/plugins/ai-desk-card
 
-# 然后把 plugin/settings/hooks.json 的 hooks 块手动合并到
-# ~/.claude/settings.json
+# Other CLIs follow the same pattern; check your CLI's docs for
+# the plugin directory location.
 ```
 
----
-
-## 📟 日常使用
-
-装完以后 Claude Code 里有这几个斜杠命令：
-
-| 命令 | 作用 |
-| --- | --- |
-| `/buddy-install` | 首次安装 / 重新校验环境 |
-| `/buddy-start` | 启动 daemon（幂等） |
-| `/buddy-stop` | 停止 daemon |
-| `/buddy-status` | 看 daemon pid、串口、hooks 安装情况、日志尾部 |
-| `/buddy-flash` | 重新编译 + 烧录固件和字体（stop → flash → start） |
-
-状态目录：`~/.claude-buddy/`（pid、log）。
-
----
-
-## ⌨️ 控制
-
-| 按键 / 区域 | Dashboard 状态页 | 审批卡片 |
-| --- | --- | --- |
-| **PUSH**（中） | 触发一次重绘 | **同意** |
-| **DOWN**（下） | 切换 demo 模式 | **拒绝** |
-| **UP**（上） | 短按：强制 GC16 全刷（清残影）· 长按 1.5s：切换 **DND 勿扰** | — |
-| 点会话行 | 切换 dashboard focus 到该 session | — |
-| 点右上 `SETTINGS` | 打开设置页 | — |
-| 点选项卡片 | — | 回答 `AskUserQuestion` |
-
----
-
-## 🔌 Transport
-
-默认 `BUDDY_TRANSPORT=auto` —— 有 USB 走 USB，没有就 BLE。
+**Option B — clone target machine's plugin directory**:
 
 ```bash
-BUDDY_TRANSPORT=ble    /buddy-start
-BUDDY_TRANSPORT=serial /buddy-start
+# If you don't want a symlink, you can clone the repo directly into
+# the plugin directory:
+mkdir -p ~/.claude/plugins/
+git clone https://github.com/op7418/ai-desk-card.git ~/.claude/plugins/ai-desk-card-src
+ln -s ~/.claude/plugins/ai-desk-card-src/plugin ~/.claude/plugins/ai-desk-card
 ```
 
-BLE 首次连接会触发 macOS 系统配对对话框，Paper 屏幕上显示 6 位 passkey，你输进去即可。以后自动重连。
+Verify install — open your AI CLI and run `/card-` and see the
+autocomplete pop up with all slash commands.
 
----
+### Step 4 — Start the daemon
 
-## 💰 上下文预算
-
-屏幕上的进度条显示 **当前 focus 的 session 的上下文窗口占用量** ÷ 上限，读取自 session transcript JSONL 里最后一条 assistant 消息的 `usage.input_tokens + output_tokens`。
-
-默认上限 200K（Claude 4.6 标准上下文）。要用 1M 上下文的 4.7 beta：
+The daemon is a small Python process that bridges your AI agent
+(over local HTTP) and the device (over Wi-Fi / USB / BLE).
 
 ```bash
-BUDDY_BUDGET=1000000 /buddy-start
+/card-start
 ```
 
-设 0 隐藏进度条。
+This auto-picks the best available transport (Wi-Fi > USB > BLE).
+On first install with the device plugged in via USB, it will pick USB.
 
----
-
-## 🌐 语言切换
-
-默认英文。点 `SETTINGS` → 第一行 **language / 语言** → 切换到中文。选择写入 NVS，重启保留。
-
----
-
-## 📂 目录结构
-
-```
-src/
-  ble_bridge.cpp/h       # Nordic UART Service，双向行缓冲 TX/RX
-  stats.h                # NVS 状态（approvals/denials/level/DND/language）
-  paper/
-    main.cpp             # UI、状态机、触屏、设置页、i18n
-    data_paper.h         # TamaState + JSON 协议解析（UTF-8 安全）
-    xfer_paper.h         # status 响应、name/owner/unpair 命令
-    buddy_frames.h       # ASCII 猫的 6 个状态帧
-data/cjk.ttf             # CJK 字体，通过 uploadfs 刷进 LittleFS
-partitions-m5paper.csv   # 3MB app + 13MB LittleFS 分区表
-platformio.ini
-plugin/                  # Claude Code 插件打包
-  plugin.json            # manifest
-  commands/              # /buddy-* 斜杠命令
-  scripts/               # install / start / stop / status / flash / common
-  settings/hooks.json    # 要合并到 ~/.claude/settings.json 的 hooks 块
-  README.md              # 插件自身的 README
-tools/claude_code_bridge.py   # daemon: HTTP → serial/BLE 桥接
-```
-
----
-
-## 📖 深入阅读
-
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** —— 技术架构 / 通信协议 / daemon 与固件内部 / 踩过的坑
-- **[docs/PRODUCT.md](docs/PRODUCT.md)** —— 产品思考 / 设计取舍 / 未来畅想 / 给想 fork 的人
-
----
-
-## 🧩 开发
-
-固件改完后：
+Verify — daemon writes to `${TMPDIR:-/tmp}/ai_desk_card_daemon.log`:
 
 ```bash
-pio run -e m5paper              # 只 build
-pio run -e m5paper -t upload    # 烧固件
-pio run -e m5paper -t uploadfs  # 更新 LittleFS（字体变了才需要）
+tail -10 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log"
 ```
 
-daemon 改完直接重启：
+Expected lines:
+
+```
+[serial] opened /dev/cu.usbserial-XXX @ 115200 baud
+[http] listening on 127.0.0.1:9877
+[ready] ai-desk-card daemon v0.8 — push widgets via POST /widget
+```
+
+### Step 5 — Pair BLE (one-time)
+
+The device's BLE radio is on by default and advertising as `Card-XXXX`.
+Pairing is needed only if you want to use BLE later — for the initial
+setup over USB you can skip this.
+
+Pair flow: when daemon connects to the device's BLE characteristic for
+the first time, macOS prompts to pair. The device displays a 6-digit
+PIN on its e-ink screen; type that into the macOS prompt. Done.
+
+### Step 6 — Provision Wi-Fi
+
+This is the big quality-of-life step. After Wi-Fi, frame push latency
+drops from 1-32 s (USB) to 0.2 s (Wi-Fi).
 
 ```bash
-/buddy-stop && /buddy-start
-# 或：
-plugin/scripts/stop.sh && plugin/scripts/start.sh
+/card-wifi-setup "<your SSID>" "<your password>"
 ```
 
-看日志：`tail -f ~/.claude-buddy/daemon.log`
+The credentials go from your AI CLI → daemon → device NVS (over USB
+or BLE). They are **never** written to git, daemon logs, or any
+remote service.
+
+Wait ~15 seconds; the device will join your Wi-Fi and advertise via
+mDNS. Verify:
+
+```bash
+bash plugin/skills/card-onboard/scripts/probe.sh
+```
+
+Look for `"mdns_peer": { "ip": "...", "port": 9880 }` in the output.
+
+### Step 7 — Restart daemon to switch to Wi-Fi
+
+```bash
+/card-stop && /card-start
+```
+
+Now look for `[transport] found Wi-Fi peer X.X.X.X:9880, using Wi-Fi`.
+
+### Step 8 — Push your first widget
+
+In your AI CLI, ask:
+
+> Show me today's weather on my card.
+
+The agent will use `/card-widget` to push a weather widget. ~0.2
+seconds later it's on the screen.
 
 ---
 
-## 🙏 致谢
+## Configuration
 
-本项目参考了 Anthropic 的 [`claude-desktop-buddy`](https://github.com/anthropics/claude-desktop-buddy) —— Nordic UART Service + heartbeat-JSON 通信协议沿用它的形状，因此理论上这块 Paper 也能被原项目的桌面端 bridge 驱动。
+All optional. Defaults work fine for typical use.
 
-内置字体是 GenSenRounded Regular，来自 M5Stack 的 `M5EPD` 库示例。
+### Sleep-card content (`assets/profile.yaml`)
+
+Edit this YAML to customise the digital business card shown when you
+run `/card-sleep`:
+
+```yaml
+name: "Your Name"
+tagline: "what you do"
+bio_lines:
+  - "interests / focus areas"
+  - "second line"
+tags:
+  - icon: "JOB"
+    text: "your job title"
+  - icon: "CITY"
+    text: "your city"
+  - icon: "WEB"
+    text: "yoursite.com"
+qr_image: "qr.png"    # optional; drop a PNG in assets/
+qr_label: "scan to connect"
+avatar_image: "avatar.png"
+footer: "ai-desk-card · sleeping"
+```
+
+After editing, run `/card-sleep` to push the new card and put the
+device to sleep.
+
+### Cron auto-refresh (`~/.ai-desk-card-refresh.log`)
+
+To have widgets refresh automatically, add a cron line:
+
+```bash
+crontab -e
+```
+
+Add:
+
+```cron
+# Workday 8:00-22:00, every 30 min
+*/30 8-21 * * 1-5  /path/to/ai-desk-card/plugin/skills/card-refresh/scripts/refresh_loop.sh
+```
+
+The script auto-picks any AI CLI on your `$PATH`. To pin a specific
+one:
+
+```cron
+*/30 8-21 * * 1-5  AI_CLI=codex /path/to/refresh_loop.sh
+```
+
+Full cost / cadence / no-AI-fallback story:
+[plugin/skills/card-refresh/REFRESH.md](plugin/skills/card-refresh/REFRESH.md).
+
+### No-AI fallback config (`~/.card-refresh.yaml`)
+
+If you'd rather skip the AI entirely and just refresh weather +
+system + git widgets locally:
+
+```yaml
+location: "Beijing"
+repo_path: "/Users/you/code/main-project"
+```
+
+Then point cron at `fallback_refresh.py` instead of `refresh_loop.sh`:
+
+```cron
+0 */2 * * *  /usr/bin/python3 /path/to/ai-desk-card/plugin/skills/card-refresh/scripts/fallback_refresh.py
+```
+
+### Daemon URL (`$CARD_DAEMON_URL`)
+
+By default the daemon listens on `http://127.0.0.1:9877`. If you need
+to override (e.g., running daemon on a different machine):
+
+```bash
+export CARD_DAEMON_URL=http://192.168.1.50:9877
+```
+
+All slash commands and scripts honor this env var.
+
+### AI CLI selection (`$AI_CLI`)
+
+For the cron refresh script, default is auto-detect from
+`{claude, codex, gemini, aider}`. To force one:
+
+```bash
+export AI_CLI=codex
+```
+
+### Forgetting Wi-Fi credentials
+
+```bash
+/card-wifi-setup ""
+```
+
+Empty SSID clears the NVS-stored credentials. The device will stay off
+Wi-Fi on next boot.
 
 ---
 
-## 📜 协议
+## Three power-mode architectures
 
-本项目使用 **[GPL-3.0](LICENSE)** 协议，额外附加**署名要求**：
+The daemon picks transport automatically per push; the firmware picks
+Wi-Fi strategy based on whether USB-C is supplying power.
 
-> **任何 fork / 修改 / 再分发，都必须：**
->
-> 1. 保留 `Copyright © 2026 op7418` 版权声明
-> 2. 在 README 或 About 里**显眼地署名** "op7418 / m5-paper-buddy"
-> 3. 衍生作品自身也必须 **以 GPL-3.0 或更高版本开源**，并**公开完整源代码**
+| Mode | Device on | Latency | Battery life |
+|---|---|---|---|
+| **A** Always plugged in | USB-C power, Wi-Fi always on | 0.2 s/frame | n/a (powered) |
+| **B** USB serial only | USB-C data cable (no Wi-Fi yet) | 1 s region / 32 s full | n/a (powered) |
+| **C** Battery + BLE standby | Wi-Fi off until daemon BLE-wakes it | 5 s wake + 0.2 s push | months |
 
-换句话说：你可以自由 fork / 改 / 用在商业场景里，但改完的版本也必须开源 + 署名。合了就必须开源，不接受闭源衍生。
+Architecture C: device sleeps with BLE in standby, daemon sends
+`cmd:wifi_wake_now` over BLE, device brings Wi-Fi up, daemon pushes
+the frame via HTTP, device drops Wi-Fi after a 30-second linger.
+~0.2 mAh per wake-and-push; 24 pushes/day → 6 months on a charge.
 
-详见 [LICENSE](LICENSE) 文件里的 "Attribution & derivative obligations" 段落。
+For more architecture detail see [PRODUCT.md](PRODUCT.md).
 
-<details>
-<summary>第三方组件</summary>
+---
 
-- `data/cjk.ttf`：GenSenRounded Regular，来自 M5EPD 库示例，字体本身的许可条款适用于该文件
-- Nordic UART Service UUID 与 heartbeat JSON schema：参考自 anthropics/claude-desktop-buddy（MIT）
+## 16 widget types
 
-</details>
+**Work staples**: `weather`, `calendar`, `next-meeting`, `messages`,
+`inbox`, `system`, `git-status`, `pr-queue`, `now-playing`
+
+**Note-taking & focus**: `scratch`, `todo`, `focus`, `deadlines`,
+`break-reminder`
+
+**AI monitoring**: `ai-status`, `ai-tasks`
+
+Every widget is a JSON schema. AI agents fill the schema; the daemon
+renders server-side (Python + Pillow) and ships pixels to the device.
+See [plugin/skills/card-widget/schemas/](plugin/skills/card-widget/schemas/)
+for the full schemas.
+
+## Slash commands
+
+| Command | What it does |
+|---|---|
+| `/card-onboard` | First-time setup walkthrough (detects daemon / USB / firmware / Wi-Fi state) |
+| `/card-widget` | Push widgets to slots (AI uses this when you ask it to show something) |
+| `/card-wifi-setup "<SSID>" "<pw>"` | Provision Wi-Fi credentials to the device's NVS |
+| `/card-sleep` | Show your digital business card + put device to deep sleep |
+| `/card-refresh` | Cron-driven auto-refresh entry point |
+| `/card-start`, `/card-stop`, `/card-status` | Daemon lifecycle |
+| `/card-install` | Build (if needed) + flash firmware |
+
+---
+
+## Troubleshooting
+
+### "Daemon won't start"
+
+```bash
+tail -30 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log"
+```
+
+Common causes: serial port held by another process, no Python 3.10+
+for BLE path, port 9877 already in use.
+
+### "Wi-Fi connect keeps failing"
+
+```bash
+tail -30 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log" | grep wifi
+```
+
+Status codes:
+
+- `1` = SSID not found (typo, or **ESP32 doesn't support 5 GHz** — make
+  sure your router exposes a 2.4 GHz SSID)
+- `4` = auth fail (wrong password)
+- `6` = DHCP fail (router issue)
+
+### "I want to see the rendered frame without flashing"
+
+```bash
+curl -sf -X POST http://127.0.0.1:9877/widgets/preview -o /tmp/preview.png
+open /tmp/preview.png
+```
+
+### "Device shows boot splash forever"
+
+The daemon isn't connected. Run:
+
+```bash
+bash plugin/skills/card-onboard/scripts/probe.sh
+```
+
+Read the JSON output; the skill `/card-onboard` will walk you through
+fixing whatever's wrong.
+
+### "I want to verify my firmware is v0.8"
+
+```bash
+curl -sf -X POST http://127.0.0.1:9877/firmware-probe | python3 -m json.tool
+# expect: ack.fw = "0.8.0"
+```
+
+### "It used to work over BLE but now hangs"
+
+The BLE frame-data path has a known issue (the daemon completes the
+write but the device-side `onWrite` callback doesn't fire for sustained
+writes). Workaround: provision Wi-Fi, restart the daemon — it'll switch
+to HTTP via mDNS. See [HANDOVER.md § Known Issues](HANDOVER.md#known-issues--workarounds)
+for the full story.
+
+### Deeper debugging
+
+See [HANDOVER.md § Debugging recipes](HANDOVER.md#debugging-recipes).
+
+---
+
+## Layout
+
+```
+ai-desk-card/
+├── README.md
+├── HANDOVER.md             engineering handover (for the next maintainer)
+├── PRODUCT.md              product positioning + use cases
+├── PLAN.md                 architecture decisions + scope rules
+├── PLAN_RENDERING_V06.md   v0.6 server-side rendering migration notes
+├── platformio.ini          env:card
+├── partitions.csv          custom partition table (LittleFS for the CJK font)
+├── LICENSE                 GPL-3.0 with attribution clause
+├── assets/                 sleep-card profile + assets
+├── data/                   CJK font for the daemon's PIL renderer
+├── src/                    firmware (frame_receiver + wifi + http + ble)
+├── daemon/                 Python HTTP bridge + renderers
+└── plugin/                 commands, scripts, skills (this IS the plugin)
+```
+
+## Versioning
+
+- `plugin.json` `version` is the plugin spec version
+- `platformio.ini` `-DCARD_VERSION` is the firmware version
+- Daemon picks up firmware version via `/firmware-probe`
+
+Both should match across release tags.
+
+## License
+
+GPL-3.0 with attribution clause. See [LICENSE](LICENSE).
+
+Vendored EPDGUI framework (parent project's `src/paper/epdgui/`): MIT,
+© 2020 m5stack — see the parent repo's NOTICE.md.
+
+## Contributing
+
+Issues and PRs welcome at https://github.com/op7418/ai-desk-card.
+
+Especially valuable contributions:
+- Hardware photos / videos (helps new users see what they're getting)
+- Linux / Windows daemon testing
+- M5Paper V1.0 / S3 firmware port confirmation
+- New widget schemas + renderers
+- Captive portal Wi-Fi provisioning (roadmap)
