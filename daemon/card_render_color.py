@@ -200,11 +200,163 @@ def paint_todo(d, rect, data, stale=False):
         if tag:
             d.text((cx + 22, ty + 30), tag, fill=color, font=font(15))
 
+def paint_ambient(d, rect, data, stale=False):
+    """Local temperature + humidity from the device's SHT40 sensor.
+    Color-exclusive widget — V1.1 has no on-board sensor."""
+    cx, cy, cw, ch = _slot_chrome(d, rect, "AMBIENT", accent=COL["green"])
+    temp = data.get("temp_c")
+    humid = data.get("humid_pct")
+    age_s = data.get("age_s")
+
+    # Two halves: temperature left, humidity right
+    half_w = cw // 2
+    if temp is not None:
+        tx = f"{temp:.1f}°"
+        d.text((cx, cy + 4), tx, fill=COL["ink"], font=font(56))
+        d.text((cx, cy + 70), "温度", fill=COL["muted"], font=font(18))
+    if humid is not None:
+        hx = f"{int(round(humid))}%"
+        hw = d.textlength(hx, font=font(56))
+        d.text((cx + cw - hw, cy + 4), hx, fill=COL["blue"], font=font(56))
+        d.text((cx + cw - 40, cy + 70), "湿度", fill=COL["muted"], font=font(18))
+    if age_s is not None and age_s > 60:
+        d.text((cx, cy + ch - 20), f"读数 {age_s}s 前",
+               fill=COL["muted"], font=font(14))
+
+def paint_ai_status(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "AI", accent=COL["blue"])
+    x, y, w, h = rect
+    session = data.get("session_name", "")
+    model = data.get("model", "")
+    task = data.get("task", "")
+    ctx = data.get("context") or {}
+    used = ctx.get("used")
+    limit = ctx.get("limit")
+
+    if session:
+        sw = d.textlength(session, font=font(18))
+        d.text((x + w - 12 - sw, y + 6), session, fill=COL["paper"], font=font(18))
+
+    if model:
+        d.text((cx, cy + 4), model, fill=COL["ink"], font=font(26))
+    if task:
+        task_t = _truncate(d, task, font(20), cw)
+        d.text((cx, cy + 38), task_t, fill=COL["ink"], font=font(20))
+
+    # Context bar
+    if used and limit:
+        bar_y = cy + ch - 38
+        d.text((cx, bar_y - 22), f"ctx {used // 1000}K / {limit // 1000}K",
+               fill=COL["muted"], font=font(16))
+        d.rectangle([cx, bar_y, cx + cw, bar_y + 14],
+                    outline=COL["ink"], width=1)
+        filled = int(cw * used / limit)
+        fill_color = COL["red"] if used / limit > 0.9 else COL["ink"]
+        d.rectangle([cx, bar_y, cx + filled, bar_y + 14], fill=fill_color)
+
+def paint_pr_queue(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "PRS", accent=COL["red"])
+    x, y, w, h = rect
+    review = data.get("review_count", 0)
+    yours = data.get("your_open_count", 0)
+    items = data.get("items") or []
+
+    # Counts top-right of header
+    counts = f"{review} / {yours}"
+    cwidth = d.textlength(counts, font=font(20))
+    d.text((x + w - 12 - cwidth, y + 4), counts,
+           fill=COL["paper"], font=font(20))
+
+    # Up to 2 items
+    status_colors = {
+        "review": COL["red"],
+        "yours": COL["blue"],
+        "approved": COL["green"],
+        "blocked": COL["yellow"],
+        "": COL["muted"],
+    }
+    for i, it in enumerate(items[:2]):
+        py = cy + 4 + i * 60
+        num = it.get("number", "")
+        title = it.get("text") or it.get("title", "")
+        status = it.get("status", "")
+        col = status_colors.get(status, COL["ink"])
+        d.text((cx, py), num, fill=col, font=font(22))
+        nw = d.textlength(num, font=font(22))
+        title_t = _truncate(d, title, font(20), cw - nw - 16)
+        d.text((cx + nw + 12, py + 2), title_t,
+               fill=COL["ink"], font=font(20))
+        if status:
+            d.text((cx + nw + 12, py + 30), status,
+                   fill=col, font=font(14))
+
+def paint_deadlines(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "DEADLINES", accent=COL["red"])
+    items = data.get("items") or []
+    for i, it in enumerate(items[:2]):
+        py = cy + 4 + i * 60
+        urgent = bool(it.get("is_urgent"))
+        col = COL["red"] if urgent else COL["ink"]
+        if urgent:
+            d.ellipse([cx, py + 8, cx + 14, py + 22], fill=col)
+            tx = cx + 22
+        else:
+            tx = cx
+        title = _truncate(d, it.get("title", ""), font(20), cw - (tx - cx))
+        d.text((tx, py + 2), title, fill=col, font=font(20))
+        due = it.get("due_label", "")
+        if due:
+            d.text((tx, py + 30), due, fill=COL["muted"], font=font(16))
+
+def paint_calendar(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "TODAY", accent=COL["yellow"])
+    x, y, w, h = rect
+    events = data.get("events") or []
+    now_iso = data.get("now_iso", "")
+    if now_iso and "T" in now_iso:
+        nowhm = now_iso.split("T")[1][:5]
+        nw = d.textlength(nowhm, font=font(18))
+        d.text((x + w - 12 - nw, y + 6), nowhm, fill=COL["ink"], font=font(18))
+    for i, ev in enumerate(events[:3]):
+        py = cy + 4 + i * 40
+        start = ev.get("start", "")
+        title = ev.get("title", "")
+        d.text((cx, py + 2), start, fill=COL["blue"], font=font(22))
+        title_t = _truncate(d, title, font(20), cw - 90)
+        d.text((cx + 88, py + 4), title_t, fill=COL["ink"], font=font(20))
+
+def paint_break_reminder(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "BREAK", accent=COL["yellow"])
+    last = data.get("last_break_min_ago")
+    sit = data.get("sitting_min")
+    eye = data.get("next_eye_rest_min")
+    advice = data.get("advice", "")
+
+    lines = []
+    if last is not None: lines.append(f"上次休息 {last}m 前")
+    if sit  is not None: lines.append(f"已坐 {sit}m")
+    if eye  is not None:
+        eye_txt = f"护眼 {-eye}m 前过期" if eye < 0 else f"下次护眼 {eye}m"
+        lines.append(eye_txt)
+    for i, ln in enumerate(lines[:3]):
+        col = COL["red"] if "过期" in ln or (sit is not None and sit > 60 and "已坐" in ln) else COL["ink"]
+        d.text((cx, cy + 4 + i * 32), ln, fill=col, font=font(20))
+    if advice:
+        adv = _truncate(d, advice, font(18), cw)
+        d.text((cx, cy + ch - 28), adv, fill=COL["green"], font=font(18))
+
+
 PAINTERS = {
-    "weather":      paint_weather,
-    "focus":        paint_focus,
-    "next-meeting": paint_next_meeting,
-    "todo":         paint_todo,
+    "weather":        paint_weather,
+    "focus":          paint_focus,
+    "next-meeting":   paint_next_meeting,
+    "todo":           paint_todo,
+    "ambient":        paint_ambient,
+    "ai-status":      paint_ai_status,
+    "pr-queue":       paint_pr_queue,
+    "deadlines":      paint_deadlines,
+    "calendar":       paint_calendar,
+    "break-reminder": paint_break_reminder,
 }
 
 def paint_empty(d, rect, label="—"):

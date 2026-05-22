@@ -106,9 +106,7 @@ def post_frame(ip: str, img, port: int = 9880,
     return {"status": r.status, "resp": resp}
 
 
-def demo_widgets_image():
-    """Render the 4-widget schedule demo (used in walkthrough videos)
-    via the Color renderer. Pulls in card_render_color from daemon/."""
+def _load_renderer():
     import importlib.util
     here = os.path.dirname(os.path.abspath(__file__))
     spec = importlib.util.spec_from_file_location(
@@ -116,6 +114,24 @@ def demo_widgets_image():
         os.path.join(here, "..", "daemon", "card_render_color.py"))
     crc = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(crc)
+    return crc
+
+
+def _fetch_device_status(ip: str, port: int = 9880) -> dict:
+    """GET the device's /status to pull SHT40 ambient + battery for the
+    bottom bar + ambient widget."""
+    try:
+        with urllib.request.urlopen(f"http://{ip}:{port}/status", timeout=3) as r:
+            import json
+            return json.loads(r.read().decode())
+    except Exception as e:
+        print(f"[warn] /status fetch failed: {e!r}")
+        return {}
+
+
+def demo_widgets_image(device_status=None):
+    """4-widget schedule demo using the Color renderer."""
+    crc = _load_renderer()
 
     widgets = [
         {"slot": "top-left", "type": "weather", "data": {
@@ -150,6 +166,51 @@ def demo_widgets_image():
         }},
     ]
     status = {"battery_pct": 95, "wifi": "Xiaomi_1303", "time": time.strftime("%H:%M")}
+    if device_status:
+        bp = device_status.get("battery_pct")
+        if bp is not None: status["battery_pct"] = bp
+        ssid = (device_status.get("wifi") or {}).get("ssid")
+        if ssid: status["wifi"] = ssid
+    return crc.render_image(widgets, status=status)
+
+
+def ambient_dashboard_image(device_status):
+    """Phase 4 demo: ALL widgets sourced from the Color device itself
+    (SHT40 ambient) + a few work staples. Shows the new color widgets:
+    ambient, ai-status, pr-queue, break-reminder."""
+    crc = _load_renderer()
+
+    amb = device_status.get("ambient") or {}
+    widgets = [
+        {"slot": "top-left", "type": "ambient", "data": {
+            "temp_c":   amb.get("temp_c", 0),
+            "humid_pct": amb.get("humid_pct", 0),
+            "age_s":    amb.get("age_s", 0),
+        }},
+        {"slot": "top-right", "type": "ai-status", "data": {
+            "session_name": "paper-color",
+            "model": "Opus 4.7",
+            "task": "Phase 4 sensors + widgets",
+            "context": {"used": 158000, "limit": 200000},
+        }},
+        {"slot": "bottom-left", "type": "pr-queue", "data": {
+            "review_count": 3,
+            "your_open_count": 2,
+            "items": [
+                {"number": "#128", "title": "Add captive portal", "status": "review"},
+                {"number": "#127", "title": "Plan C power-off hook", "status": "yours"},
+            ],
+        }},
+        {"slot": "bottom-right", "type": "break-reminder", "data": {
+            "last_break_min_ago": 48,
+            "sitting_min": 95,
+            "next_eye_rest_min": -3,
+            "advice": "起身走走 · 远眺 20 秒",
+        }},
+    ]
+    bp = device_status.get("battery_pct") or 100
+    ssid = (device_status.get("wifi") or {}).get("ssid") or ""
+    status = {"battery_pct": bp, "wifi": ssid, "time": time.strftime("%H:%M")}
     return crc.render_image(widgets, status=status)
 
 
@@ -158,15 +219,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ip", required=True, help="Device IP (e.g. 192.168.31.162)")
     ap.add_argument("--port", type=int, default=9880)
-    ap.add_argument("--test", choices=["stripes", "demo"], help="Built-in pattern")
+    ap.add_argument("--test", choices=["stripes", "demo", "ambient"],
+                    help="Built-in pattern: stripes (color test), demo (4 schedule widgets), ambient (SHT40 + AI status + PRs + break)")
     ap.add_argument("--image", help="Path to PNG/JPG to push (auto-resized to 600×400)")
     ap.add_argument("--save", help="Save the rendered image locally before pushing")
     args = ap.parse_args()
 
+    device_status = _fetch_device_status(args.ip, args.port)
     if args.test == "stripes":
         img = test_stripes_image()
     elif args.test == "demo":
-        img = demo_widgets_image()
+        img = demo_widgets_image(device_status)
+    elif args.test == "ambient":
+        if not device_status.get("ambient"):
+            sys.exit("device has no ambient (SHT40) data — is it the Color device?")
+        img = ambient_dashboard_image(device_status)
     elif args.image:
         from PIL import Image
         img = Image.open(args.image).convert("RGB")

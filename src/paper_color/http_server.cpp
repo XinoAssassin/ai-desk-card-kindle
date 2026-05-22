@@ -1,5 +1,7 @@
 #include "http_server.h"
 #include "wifi_bridge.h"
+#include "sht40.h"
+#include "feedback_led.h"
 
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -63,10 +65,20 @@ void handleStatus(WiFiClient& c) {
     doc["panel_h"]      = (int)M5.Display.height();
     doc["color_mode"]   = "spectra6";
     doc["battery_pct"]  = (int)M5.Power.getBatteryLevel();
+    doc["uptime_s"]     = (uint32_t)(millis() / 1000);
     JsonObject wifi = doc["wifi"].to<JsonObject>();
     wifi["ssid"]     = wifiSSID();
     wifi["ip"]       = wifiIPStr();
     wifi["rssi"]     = wifiRSSI();
+
+    // v0.10: SHT40 ambient readings (Paper Color exclusive — V1.1
+    // has no temperature sensor on board)
+    if (sht40LastReadMs() > 0) {
+        JsonObject amb = doc["ambient"].to<JsonObject>();
+        amb["temp_c"]   = sht40LastTempC();
+        amb["humid_pct"] = sht40LastHumidPct();
+        amb["age_s"]    = (uint32_t)((millis() - sht40LastReadMs()) / 1000);
+    }
     String body; serializeJson(doc, body);
     writeStatus(c, 200, "OK", "application/json", body);
 }

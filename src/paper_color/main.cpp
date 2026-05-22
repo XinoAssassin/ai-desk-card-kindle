@@ -13,6 +13,8 @@
 
 #include "wifi_bridge.h"
 #include "http_server.h"
+#include "sht40.h"
+#include "feedback_led.h"
 
 #ifndef CARD_VERSION
 #define CARD_VERSION "0.10.0-color"
@@ -115,7 +117,26 @@ void setup() {
     paintBootSplash();
     Serial.println("[boot] splash pushed");
 
+    sht40Init();
+    sht40Read();        // first measurement so /status has data immediately
+    ledInit();
+
     wifiInit();
+}
+
+// Send a touch-event JSON line to daemon if reachable. Used by the 3
+// physical buttons to drive the same dispatch path V1.1 uses for touch
+// chip taps — daemon's existing VIEW_HOT_ZONES + _internal_dispatch
+// machinery handles back/settings/sleep/refresh actions.
+static void emitButtonEvent(const char* button, const char* action) {
+    char body[80];
+    snprintf(body, sizeof(body), "{\"button\":\"%s\",\"action\":\"%s\"}",
+             button, action);
+    Serial.printf("[btn] %s → %s\n", button, action);
+    ledBlinkAck();
+    if (wifiConnected() && httpDaemonIp()[0] != 0) {
+        httpPostJsonToDaemon("/button", body);
+    }
 }
 
 void loop() {
@@ -135,11 +156,22 @@ void loop() {
     }
     httpServerPoll();
 
-    // Button stubs — log only for now. Phase 4 will wire to
-    // settings / refresh / sleep daemon endpoints.
-    if (M5.BtnA.wasClicked()) Serial.println("[btn] A clicked");
-    if (M5.BtnB.wasClicked()) Serial.println("[btn] B clicked");
-    if (M5.BtnC.wasClicked()) Serial.println("[btn] C clicked");
+    // Phase 4: buttons → daemon dispatch. Mapping mirrors the V1.1
+    // bottom-bar chip semantics so daemon-side actions can be shared.
+    if (M5.BtnA.wasClicked()) emitButtonEvent("A", "refresh");
+    if (M5.BtnB.wasClicked()) emitButtonEvent("B", "settings");
+    if (M5.BtnC.wasClicked()) emitButtonEvent("C", "sleep");
+
+    // SHT40 ambient: read every 30 s. Cheap I2C, doesn't block panel.
+    static uint32_t s_lastSht = 0;
+    uint32_t now = millis();
+    if (now - s_lastSht > 30000) {
+        s_lastSht = now;
+        if (sht40Read()) {
+            Serial.printf("[sht40] T=%.1f°C H=%.0f%%\n",
+                          sht40LastTempC(), sht40LastHumidPct());
+        }
+    }
 
     delay(10);
 }
