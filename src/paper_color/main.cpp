@@ -161,9 +161,11 @@ void loop() {
 
     // Phase 4: buttons → daemon dispatch. Mapping mirrors the V1.1
     // bottom-bar chip semantics so daemon-side actions can be shared.
-    if (M5.BtnA.wasClicked()) emitButtonEvent("A", "refresh");
-    if (M5.BtnB.wasClicked()) emitButtonEvent("B", "settings");
-    if (M5.BtnC.wasClicked()) emitButtonEvent("C", "sleep");
+    // Each button also plays a DISTINCT preset sound — gives instant
+    // physical→logical mapping verification (no need to read serial).
+    if (M5.BtnA.wasClicked()) { audioBeepChime();  emitButtonEvent("A", "refresh");  }
+    if (M5.BtnB.wasClicked()) { audioBeepAlert();  emitButtonEvent("B", "settings"); }
+    if (M5.BtnC.wasClicked()) { audioBeepUrgent(); emitButtonEvent("C", "sleep");    }
 
     // SHT40 ambient: read every 30 s. Cheap I2C, doesn't block panel.
     static uint32_t s_lastSht = 0;
