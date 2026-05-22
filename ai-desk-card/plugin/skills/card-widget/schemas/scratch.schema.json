@@ -9,7 +9,7 @@
     "text":   { "type": "string", "maxLength": 180,
                 "description": "Body text. Can be a sentence or a few lines. Wraps automatically." },
     "source": { "type": "string", "maxLength": 20,
-                "description": "Who/what produced the note: 'Claude', user's name, or app name." },
+                "description": "Who/what produced the note: the producing agent or app name." },
     "age":    { "type": "string", "maxLength": 12,
                 "description": "Human age string: 'just now', '2h', 'yesterday'." }
   }

@@ -117,7 +117,7 @@ struct WidgetAiTasksData {
     uint16_t completed_today;
 };
 
-// Sticky-note free-form text. AI fills `text`; `source` is "Claude" /
+// Sticky-note free-form text. AI fills `text`; `source` is the agent name /
 // "user" / a person's name; `age` is a human string like "just now" / "2h".
 struct WidgetScratchData {
     char text[200];

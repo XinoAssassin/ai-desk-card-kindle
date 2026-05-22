@@ -7,7 +7,7 @@ description: |
   副屏 / 墨水屏 / e-ink display. 16 widget types available; AI picks slot
   + widget type, fills data, POSTs to the local card daemon (default
   127.0.0.1:9877). Communicates over loopback, so individual widget writes
-  don't trigger Claude Code approval prompts.
+  don't trigger AI agent approval prompts.
 trigger_keywords:
   - card widget
   - 卡片
@@ -356,6 +356,6 @@ intentionally. Tag icons should be plain short labels (`Job` / `City` /
 ## Auto-refresh (every 2 hours)
 
 If the user has set up the cron-driven refresh (see `/card-refresh` skill
-+ `REFRESH.md`), the cron job will re-invoke headless Claude every 2
++ `REFRESH.md`), the cron job will re-invoke a headless AI CLI every 2
 hours to refresh widgets with fresh data. **You don't need to manually
 poll** — just push widgets when relevant during the conversation.

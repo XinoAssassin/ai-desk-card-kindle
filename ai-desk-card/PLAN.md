@@ -16,7 +16,7 @@
 | Role | Active companion: approval cards, session dashboard, audio buddy face | Passive副屏: always-on glanceable widget grid |
 | Interaction | Touch + side buttons + voice (planned) | Touch only — single-tap to enter settings |
 | Primary screen | Dashboard (sessions / approval card / cat) | Frame_WidgetDashboard (4-slot widget grid) |
-| Source of data | Claude Code hooks via daemon | Same daemon, but card only consumes the widget payload |
+| Source of data | AI agent hooks via daemon | Same daemon, but card only consumes the widget payload |
 | Approval handling | Yes (BtnP / touch) | No — approvals show as count on ai-tasks widget; approve in terminal |
 
 User can re-flash buddy firmware any time; this is a parallel personality
@@ -26,7 +26,7 @@ for the M5Paper, not a replacement of the codebase.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  AI (Claude Code session)                                  │
+│  AI (AI agent session)                                  │
 │  Decides:                                                  │
 │    - what values to send                                   │
 │    - which slot to send to                                 │
@@ -69,8 +69,8 @@ for the M5Paper, not a replacement of the codebase.
 | `todo` | bottom | macOS Reminders (existing fetcher) | schema + render |
 | `calendar` | middle | macOS EventKit (NEW fetcher stub) | schema + render |
 | `messages` | top-right | macOS NotificationCenter (NEW, mock data v0.5) | schema + render |
-| `ai-status` | top-right alt | Claude Code hooks (daemon auto-fill) | schema + render |
-| `ai-tasks` | top-left alt | Claude Code hooks (daemon auto-fill) | schema + render |
+| `ai-status` | top-right alt | AI agent hooks (daemon auto-fill) | schema + render |
+| `ai-tasks` | top-left alt | AI agent hooks (daemon auto-fill) | schema + render |
 
 AI decides which TWO ai-* widgets to show vs which TWO work widgets — the
 4-slot grid only fits 4 at once. Reasonable defaults: weather / ai-status
@@ -126,4 +126,4 @@ yet. The cloud path is plumbing for v0.6.
 1. `cd ai-desk-card && pio run -e card -t uploadfs` — flash CJK font once
 2. `pio run -e card -t upload` — flash firmware
 3. `python3 daemon/card_daemon.py --transport serial` — connect to device
-4. From any Claude Code session: `/card-widget show` or just push via Skill
+4. From any AI agent session: `/card-widget show` or just push via Skill

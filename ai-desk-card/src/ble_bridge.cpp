@@ -142,9 +142,9 @@ void bleInit(const char* deviceName) {
   // CRITICAL: BLEDevice::init(name) only writes the GAP name; the actual
   // ADV/scan-response packet's "complete local name" field is left to the
   // BT stack's default which is *cached in NVS across firmware reflash*.
-  // If this device previously ran m5-paper-buddy ("Claude-XXXX"), the
-  // cached scan response still says "Claude-..." even after we flash
-  // card firmware that calls init("Card-..."). Force an explicit
+  // If this device previously ran another firmware with a different BLE
+  // name, the cached scan response still uses the old name even after we
+  // flash card firmware that calls init("Card-..."). Force an explicit
   // advertisement payload with the correct name to override the cache.
   BLEAdvertisementData advData;
   advData.setFlags(0x06);                       // BR/EDR not supported + LE general discoverable

@@ -118,14 +118,14 @@ If the user says "刷新一下卡片" in conversation, do the same thing but
 - ❌ Don't push widgets that weren't already there (e.g., "I noticed you
   don't have a weather widget, let me add one").
 - ❌ Don't write `ai-status` from this skill — that's driven by interactive
-  Claude Code sessions.
+  interactive AI agent sessions.
 - ❌ Don't fetch data from sources that need OAuth without checking if
   credentials are configured.
 
 ## Helper scripts
 
 - `scripts/refresh_loop.sh` — one-shot refresh entry point. Used as the
-  cron command. Wraps the headless Claude invocation.
+  cron command. Wraps the headless AI CLI invocation.
 - `scripts/fallback_refresh.py` — pure-Python no-AI version that only
   refreshes `system`, `git-status`, and `weather` (wttr.in). For users
   who don't want token cost.

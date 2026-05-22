@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# ai-desk-card cron 入口 — 每次 cron 触发跑一次。
-# 用 headless Claude 来执行 /card-refresh skill。
+# AI Desk Card cron 入口 — 每次 cron 触发跑一次。
+# 用 headless AI CLI 来执行 /card-refresh skill。
 #
-# crontab 示例（工作日 9-19 点 每 2h）:
-#   0 9,11,13,15,17,19 * * 1-5  /path/to/this/refresh_loop.sh
+# AI CLI 选择策略：
+#   1. 如果 $AI_CLI 设置了 → 用它（路径或名字均可）
+#   2. 否则按顺序找：claude, codex, gemini, aider — 哪个先存在用哪个
 #
-# 日志：~/.ai-desk-card-refresh.log（每行带时间戳 + 一行 [cost] 汇总）
+# crontab 示例（工作日 8-21 点 每 30min）:
+#   */30 8-21 * * 1-5  /path/to/refresh_loop.sh
+#
+# 日志：~/.ai-desk-card-refresh.log
 
 set -u
 
@@ -23,26 +27,37 @@ if ! curl -sf -m 2 "$DAEMON_URL/pair-status" >/dev/null; then
   exit 1
 fi
 
-# 1. 跑 headless Claude，让它执行 /card-refresh skill
-#    --print          —— 一次性、非交互模式
-#    --max-turns 5    —— 限制 turn 数，避免失控
-#    /card-refresh   —— skill slash command
-CLAUDE_BIN="$(command -v claude || true)"
-if [[ -z "$CLAUDE_BIN" ]]; then
-  log "ERROR 'claude' CLI not in PATH. Install: https://docs.claude.com/cli"
+# 1. 选 AI CLI
+AI_BIN=""
+if [[ -n "${AI_CLI:-}" ]]; then
+  AI_BIN="$(command -v "$AI_CLI" || true)"
+  [[ -z "$AI_BIN" && -x "$AI_CLI" ]] && AI_BIN="$AI_CLI"
+fi
+if [[ -z "$AI_BIN" ]]; then
+  for c in claude codex gemini aider; do
+    AI_BIN="$(command -v "$c" || true)"
+    [[ -n "$AI_BIN" ]] && { log "auto-picked AI CLI: $c"; break; }
+  done
+fi
+if [[ -z "$AI_BIN" ]]; then
+  log "ERROR no AI CLI in PATH. Set \$AI_CLI or install one (claude/codex/gemini/aider)."
   exit 2
 fi
 
+# 2. 跑 headless AI CLI 执行 /card-refresh skill
+#    --print          → 一次性、非交互模式（兼容多数 CLI 的"single-shot"开关）
+#    --max-turns 5    → 限制 turn 数，避免失控
+#    /card-refresh   → skill slash command
 # stderr 进日志、stdout 默默吃掉（cron 不需要看）
-"$CLAUDE_BIN" --print --max-turns 5 "/card-refresh" \
+"$AI_BIN" --print --max-turns 5 "/card-refresh" \
     > /dev/null \
     2>> "$LOG"
 RC=$?
 
-log "headless claude rc=$RC"
+log "headless AI rc=$RC"
 
-# 2. 抓最后几行 token 用量（Claude CLI 会在 stderr 打 [cost] 之类）
-COST=$(tail -50 "$LOG" | grep -E '(\$|tokens)' | tail -1 || true)
+# 3. 抓最后几行 token 用量（很多 CLI 会在 stderr 打 [cost] 之类）
+COST=$(tail -50 "$LOG" | grep -E '(\$|tokens|cost)' | tail -1 || true)
 [[ -n "$COST" ]] && log "[cost] $COST"
 
 log "=== refresh end ==="

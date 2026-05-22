@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """ai-desk-card daemon — HTTP API + USB/BLE bridge to the M5Paper card firmware.
 
-Forked + slimmed from ../tools/claude_code_bridge.py. Differences:
-  - No Claude Code hook handlers; this daemon is display-only
+v0.6+ daemon: bridges an AI agent to the M5Paper display.
+Differences from the original buddy bridge it was forked from:
+  - No agent-side hook handlers; this daemon is display-only
   - No buddy/dashboard heartbeat (firmware doesn't show one)
   - widget副屏 is the only thing on the device
 
@@ -227,7 +228,7 @@ class BLETransport(Transport):
             log("[ble] bleak not installed. pip install bleak"); return
         # Match either ad.local_name (live, from the actual ADV packet) OR
         # d.name (macOS cached). Critical: on Macs that previously paired
-        # with the buddy firmware, d.name will be stale ("Claude-XXXX")
+        # with a previous firmware revision, d.name will be stale (cached)
         # even after we flash ai-desk-card; the live local_name field has
         # the correct "Card-XXXX". Prefer the live name.
         prefix = self._name_prefix
@@ -1235,7 +1236,7 @@ def main():
 
     srv = ThreadingHTTPServer(("127.0.0.1", args.http_port), CardHandler)
     log(f"[http] listening on 127.0.0.1:{args.http_port}")
-    log(f"[ready] ai-desk-card daemon v0.5 — push widgets via POST /widget")
+    log(f"[ready] ai-desk-card daemon v0.8 — push widgets via POST /widget")
     try: srv.serve_forever()
     except KeyboardInterrupt: log("\n[exit] bye")
 

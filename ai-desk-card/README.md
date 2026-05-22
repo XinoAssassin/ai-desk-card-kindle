@@ -1,18 +1,18 @@
 # AI Desk Card
 
-A glanceable e-ink 副屏 for Claude Code. The M5Paper sits next to your
-monitor and shows weather, todos, today's calendar, message previews, and
-the running AI's status. Data is pushed by Claude (via a Skill); the
-device just renders.
+A glanceable e-ink 副屏 driven by an AI agent. The M5Paper sits next to
+your monitor and shows weather, todos, today's calendar, message previews,
+and the running AI session's status. Data is pushed by an AI agent (via a
+plugin Skill); the device just renders.
 
 This is a v0.8 successor track to [`../src/`](../src/) (the original buddy
 firmware). The two live side-by-side in this repo; flash whichever
 personality you want.
 
 ```
-You ──ask──▶ Claude ──push──▶ Skill ──HTTP──▶ daemon ──Wi-Fi / USB / BLE──▶ M5Paper
-                                                                              │
-                                                                              └──▶ 16 widgets across a 4-slot grid
+You ──ask──▶ AI agent ──push──▶ Skill ──HTTP──▶ daemon ──Wi-Fi / USB / BLE──▶ M5Paper
+                                                                                │
+                                                                                └──▶ 16 widgets across a 4-slot grid
 ```
 
 ## Quick start
@@ -63,7 +63,7 @@ ai-desk-card/
 ├── platformio.ini          ← env:card (independent from parent's env:m5paper)
 ├── src/                    ← firmware (frame_receiver + wifi + http + ble)
 ├── daemon/                 ← Python HTTP/serial/BLE bridge
-├── plugin/                 ← Claude Code commands, scripts, skills
+├── plugin/                 ← commands, scripts, skills (plugin manifest)
 └── data/cjk.ttf -> ../../data/cjk.ttf
 ```
 
