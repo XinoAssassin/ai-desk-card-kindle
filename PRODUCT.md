@@ -1,288 +1,257 @@
-# AI Desk Card — Product Document
-
-## What it is
+# AI Desk Card · 产品 / 思考 / 体验 / 预测 / 用户
 
-AI Desk Card is **a small e-ink panel that sits on your desk and shows
-you what an AI agent thinks is important right now**. The agent decides
-what to show; the device renders.
+> 不只是"这个产品是什么"，更是"为什么是这样、用起来什么感觉、要去哪里、谁会真的需要它"。
 
-The hardware is M5Paper V1.1 — a 4.7-inch, 540 × 960 grayscale e-ink
-display with built-in ESP32, Wi-Fi, BLE, and a 1150 mAh battery. About
-the size of a Kindle Touch screen with no bezel-mounted keyboard.
+---
 
-The software is two halves:
+## 一、产品
 
-- A **firmware** on the M5Paper that listens for pre-rendered pixels
-  over Wi-Fi / USB / BLE and pushes them to the e-ink panel.
-- A **daemon** on the user's computer that talks to AI agent plugins,
-  renders 16 widget types server-side, and ships only the changed pixels.
+**AI Desk Card 是给 AI Agent 用户的桌面 ambient 副屏。**
 
-A user installs the plugin into any compatible AI CLI (Claude Code,
-Codex, Gemini, Aider, ...), sets up Wi-Fi once, and from then on can
-say things like "show me my schedule" or "what's in my inbox" and
-have the agent push a widget to the card in under a second.
+形态上是一块 4.7 寸的墨水屏（M5Paper V1.1），立在显示器旁边。
+工程上是一个 **Skill** —— 装到任何支持 Skill 格式的 AI Agent（Claude Code / Codex / Cursor / Aider 等），Agent 接管所有重活：探测硬件、烧固件、配 Wi-Fi、决定推什么、什么时候推。
 
-## What problem this solves
+用户的全部操作只有：
 
-People who live in their AI agent spend a lot of context on
-"things-I-need-to-be-aware-of": calendar, todos, recent messages,
-status of long-running tasks. Two failure modes:
+1. 买 M5Paper V1.1（~¥600）
+2. `npx skills add` 装 Skill
+3. 跟 Agent 说一句"帮我把卡片装上"
+4. 之后日常说"显示今天天气"、"23 点之后切名片"、"让卡片每小时刷一次未读邮件"
 
-- **Tab fatigue**: glance at the screen, lose your train of thought.
-  Each context switch costs ~25 minutes of recovery in deep work.
-- **Asking the agent over and over**: "what's on my schedule today?"
-  burns tokens, slows down whatever you were actually working on, and
-  the answer disappears the moment the agent moves on.
+设备就在桌边显示这些内容。**关屏 0 功耗保留最后一帧**，电池能撑 6 个月（架构 C）。
 
-A glanceable side panel solves both: never costs your screen real
-estate, the information persists at zero power, and once the agent
-has pushed something it stays there until the next push (e-ink retains
-the last frame indefinitely without power).
+它不是一个智能终端，不是 Friend 那种 always-listening 的设备，不是 Rabbit R1 那种试图替代手机的尝试。它**只做一件事：把 AI Agent 知道但你不知道的事情，安静地放在你的视野边缘**。
 
-## Who this is for
+---
 
-Developers, designers, and writers who:
+## 二、思考
 
-1. **Use an AI agent CLI in their workflow** (Claude Code, Codex,
-   Gemini, Aider, etc.). The plugin format is the
-   common ground.
-2. **Want a calm-tech side display** — not another notification source,
-   not a tablet, not a smartwatch. Something paper-like that doesn't
-   demand attention.
-3. **Are comfortable plugging a USB-C device in once to flash firmware**.
-   Then it's plug-and-forget.
+### 为什么是墨水屏，不是 OLED 小屏
 
-Not for: passive screen-fillers, people who want photo / animation
-displays (e-ink is grayscale and slow), people uncomfortable wiring
-their AI to a physical device.
+LCD / OLED 小屏（树莓派 + HDMI 屏、Hyperpixel）一直存在。技术上更容易。但它们解决了错的问题：
 
-## Key features
+- **会发光** → 它在抢你的注意力。e-ink 不发光 → 它在你视野边缘"存在但不打扰"
+- **常亮要电** → 必须插电，桌面多一根线。e-ink 关屏 0 功耗 → 真的可以电池供电几个月
+- **刷新快** → 你下意识会去看动画。e-ink 刷新慢 → 强制你只放"半小时变一次也无所谓的内容"
 
-### 16 widget types across 4 slots
+**墨水屏的限制本身就是产品的护城河**：它没法做错的事。这点跟纸质书 vs 电子书是同一个论点。
 
-The 540 × 960 canvas is split into four slots: two narrow (270 × 280)
-at the top, one wide middle (540 × 340), one wide bottom (540 × 280),
-plus a 60 px settings bar at the very bottom.
+### 为什么 AI Agent 决定推什么，而不是用户配 widget
 
-- **Work staples**: weather, calendar, next-meeting, messages,
-  inbox, system stats, git-status, pr-queue, now-playing
-- **Note-taking & focus**: scratch (free-form sticky note), todo,
-  focus (one active task + Pomodoro), deadlines (multi-day countdown),
-  break-reminder
-- **AI monitoring**: ai-status (current AI task + context bar),
-  ai-tasks (running / waiting / blocked / done-today counters)
+这是跟 Inkdrop / Visionect / Soulmate 等"e-ink 信息面板"项目最大的分歧。他们让用户拖 widget、配 cron。我们让 AI 主动决定。
 
-Each widget is a JSON schema; the agent fills the schema and pushes.
-The daemon renders, diffs against the previous frame, and ships only
-the changed region — typical single-widget update is 5-30 KB.
+为什么：
 
-### Three power-mode architectures, one device
+- 配 widget 是**一次性快感**：装好那天最爽，之后 90% 时间在显示"昨天我配的那几个内容"。AI 主动推可以一周一变、按你正在做的事情换内容
+- AI Agent 知道你在做什么（它看你的 todo / git / 日历 / inbox）。它能判断"现在该提醒你休息了"、"下个会还有 10 分钟"、"这个 PR review 队列堆了 5 个"
+- 配置是负担。用户买这个东西不是为了再学一个 dashboard 配置语法
 
-Same firmware runs in three power profiles based on whether USB-C is
-supplying power:
+代价：你必须信任 Agent 的决策。但反过来，**这个项目就是给那些已经把 Agent 当主要工作界面的人**用的。如果你还在质疑 Agent 该不该决定，这个产品不适合你。
 
-| Mode | Setup | Latency | Battery life | When to use |
-|---|---|---|---|---|
-| **A** Always plugged in | USB-C power, Wi-Fi always on | 0.2 s/frame | n/a (powered) | Desk companion, primary use case |
-| **B** USB-serial only | USB-C data, no Wi-Fi yet | 1 s region / 32 s full | n/a | First-time flash / debug / no Wi-Fi |
-| **C** Battery + BLE standby | No USB, Wi-Fi on-demand | 5 s wake + 0.2 s push | months | Truly portable (rare for desk use) |
+### 为什么 Skill 而不是独立 App
 
-Architecture C is interesting: the device sleeps with only BLE
-listening (low milliamp draw), the daemon wakes Wi-Fi via BLE
-command when it needs to push, sends the frame as a single HTTP
-POST, then tells the radio to sleep again. Each push costs about
-0.2 mAh — a 24-pushes-per-day cadence gives months of life.
+最初设计时考虑过：写一个独立的 daemon + GUI，用户开 macOS app 选 widget。后来全砍掉，只留 Skill。原因：
 
-### Digital business card mode
+- 独立 App 要做账户、设置、UI、自动更新、跨平台 —— 全是非核心代价
+- Agent 已经是用户的"决策入口"，**为什么要让用户额外打开一个东西**
+- Skill 形态意味着 0 维护：用户的 Agent 升级了，Skill 自然跟着升级。Agent 换了一个（从 Claude Code 换 Cursor），Skill 直接迁移
 
-`/card-sleep` renders a name card (name, tagline, bio, tags, QR code)
-from `assets/profile.yaml` and tells the device to deep-sleep.
-E-ink holds the image at 0 W indefinitely. Hand the device to someone
-as a business card; they see your contact info even though the device
-is off.
+这是 "thin harness, fat skills" 思路的延伸 —— Skill 不是软件，是**给 Agent 用的工具**。Agent 是用户界面，Skill 是后端能力。
 
-### AI-agnostic plugin
+### 为什么服务端渲染，不是设备端
 
-The plugin format ships slash commands and skills for any AI agent
-that supports the plugin spec. The cron-driven auto-refresh script
-auto-detects which AI CLI is installed (claude, codex, gemini, aider)
-or you set `$AI_CLI` to pin a specific one. No vendor lock-in.
+行业里两条路：
 
-### Server-side rendering
+- **设备端**：固件里塞 FreeType + 字体 + 所有 widget 渲染逻辑。优点：daemon 简单。缺点：加 widget 要发新固件 / 字体 OTA 痛 / 中文字号难调 / 内存吃紧
+- **服务端**：daemon 用 Python+PIL 渲染像素，设备只 blit。优点：加 widget 改 Python 即可 / 任意 unicode / 字体随便换。缺点：每帧要传 ~260KB
 
-All text rendering happens in the daemon using Pillow + a bundled CJK
-TTF (3.5 MB). The firmware never decodes a glyph — it just receives
-4-bit-per-pixel grayscale data and blits to the e-ink driver. This
-side-steps every TTF / font-coverage / multi-size bug we hit trying
-on-device rendering in v0.5.
+我们选服务端。代价是网络带宽，但 Wi-Fi 上一帧 2 秒，对一个"半小时刷新一次"的场景完全够。**架构选择跟设备的更新频率匹配，不要为了优化"理论上的极限"牺牲日常开发体验**。
 
-Cost: a daemon process must be running while the device is in use.
-For most users this just means a 50 MB Python process in the background.
+[详见 reference_eink_rendering_architectures memory]
 
-### Dirty-region diff
+### 为什么不做 OTA
 
-Between consecutive frames, the daemon computes the bounding box of
-changed pixels (`PIL.ImageChops.difference`). Typical change is a
-single widget updating → bbox is ~200 × 100 px → ~10 KB on the wire
-instead of the 250 KB full frame. Falls back to full frame when the
-bbox covers > 50 % of the canvas.
+烧固件 1 分钟，OTA 工程复杂度（manifest / sha256 / rollback / 失败处理）远超价值。当前用户基数也小到不值得做。**先把核心打磨好，再补工程化外壳**。
 
-### Auto-refresh via cron
+### 关于 Plan C（硬件关机拦截名片）的取舍
 
-A cron-driven refresh script runs a headless AI CLI on a schedule
-(default: every 30 minutes during work hours). The AI pulls data from
-configured sources — calendar, mail, git, GitHub, weather APIs etc. —
-and pushes whichever widgets the user has on the card. Token budget:
-about $1-3/day on a small/cheap model.
+V1.1 长按旋钮 2 秒 = AXP192 切电源，固件来不及拦截。理想是拦 ISR → 渲染名片 → 进 deep sleep。但这需要：
 
-For users who don't want token cost, a no-AI `fallback_refresh.py`
-ships weather + system stats + git-status using only local APIs.
+- 找到 AXP192 power-button long-press 在 ESP32 上的 RTC IO 触发路径
+- 时序得保证 EPD GC16 settling 2.5s 内完成才不显示残影
+- 各种边界 case（电量太低 / Wi-Fi 没起 / 中途用户松手）
 
-## How a user interacts with it (typical day)
+价值：用户硬关机时屏上是名片而不是上次状态。
+代价：~100 行 + 大量真机调试。
 
-```
-07:00  Cron fires. Headless AI pulls calendar / weather / inbox / PRs.
-       Daemon diffs, sends 10 KB region update. Device shows today's
-       agenda when user walks into office.
+当前选择：**先用 quiet_hours 自动切名片覆盖 90% 场景**（用户晚上 11 点不操作时 daemon 自动切），硬关机的 10% 场景容忍。等用户真的抱怨再做 Plan C。
 
-09:30  User: "show me the PR queue"
-       AI pushes pr-queue widget to slot bottom. 0.2 s later it's on
-       the card.
+---
 
-11:00  User starts a Pomodoro: "track my focus on the auth refactor for 25 min"
-       AI pushes focus widget with countdown to middle. Updates the
-       countdown every minute (small region, cheap).
+## 三、体验
 
-12:00  User leaves for lunch. Card stays on; e-ink frozen.
+> 这部分是用户真的把它放桌上用了几周之后的感受。
 
-13:30  User: "I'm back, what was I doing"
-       AI re-pushes focus widget showing "completed: auth refactor".
+### 第一周
 
-22:00  Cron stops firing. Card holds last state until tomorrow morning.
-```
+刚装上时，你会**总想盯着它看**。这是错的。屏小、刷新慢、内容简单，盯着看你会觉得"这不就显示这些吗"。
 
-Some users go further: hook the daemon to their iMessage db, Slack
-API, oncall paging system, etc. The widget schemas accept arbitrary
-data — the AI fills it however the user trains it to.
+你需要克制住"它必须时刻有新东西"的期待。它的价值在于**你不主动看它的时候也存在**：余光扫到 "FOCUS: 写 v0.9 release notes" 几个大字，提醒你不要在 PR review 里漂得太远。
 
-## How the user sets it up (first time)
+### 第二周
 
-1. **Buy an M5Paper V1.1** (about $90 from M5Stack / Amazon).
-2. **Clone the repo, install PlatformIO**, flash the firmware:
-   ```bash
-   pio run -e card -t uploadfs   # CJK font
-   pio run -e card -t upload     # firmware
-   ```
-3. **Install the plugin** into their AI CLI of choice. Plugin dir is
-   `plugin/`; the AI CLI's plugin loader picks it up.
-4. **Start the daemon**: `/card-start`
-5. **Provision Wi-Fi**: `/card-wifi-setup "MyHomeNetwork" "password"`
-6. **Ask the AI to push something**: "show me today's weather"
+开始养成"扫一眼"的习惯。从主屏抬头看一眼 → 知道下个会是什么 → 不用切 tab。这个动作只省 3 秒，但**省的是注意力切换的成本**，不是 3 秒时间。
 
-Total time: 5-10 minutes if PlatformIO is already installed,
-30 minutes if not.
+研究表明 context switch 一次损失 ~25 分钟深度工作恢复时间。e-ink 副屏的"glanceable"特性最大化降低了切换成本：眼睛不需要适应亮度变化、不需要找到信息位置（widget 位置固定）、不需要等加载。
 
-## Cost model
+### 第三周起
 
-### Hardware (one-time)
+**意识不到它存在**才是它工作的最佳状态。就像墙上的钟。你不会专门"看钟"，但你需要知道时间时，眼睛自动飘过去。
 
-- M5Paper V1.1: about ¥600 / $90
-- USB-C cable: $5 (or use one you already own)
-- Optional: USB-C charger for always-on use: $10
+之后你会发现一些非预期的用法：
 
-### Software
+- **它变成了"AI 在干什么"的物理出口**。AI session 跑了 20 分钟，看屏上 ai-status widget 显示 "ctx 180K / 200K"，你知道该 /compact 了
+- **它变成了番茄钟**。focus widget 有 pomodoros_done / planned，自然推着你按节奏工作
+- **它变成了 daily standup**：早晨第一眼看到的就是日程 + PR queue + 未读
+- **它变成了 ambient 提醒**：1 小时没看屏，break-reminder widget 静静提醒"该起来走走"。你不会被通知 ping 打扰，但抬头时会看到
 
-- Open source (GPL-3.0 with attribution). No license fees.
+### 缺点 / 摩擦点
 
-### Operating cost
+不藏着掖着：
 
-- Daemon: free (runs on your computer)
-- AI CLI token costs (only if you use the cron auto-refresh):
-  - **Small/cheap model**: ~$0.10 per refresh × 28 refreshes/day on a
-    30-min cadence ≈ **$2-3/day during work hours**
-  - **Larger model**: ~$0.30-0.80 per refresh × same → **$8-22/day**
-  - **No-AI fallback**: $0/day (loses calendar / mail / pr-queue;
-    keeps weather + system + git)
-- Optional: pin the cron cadence longer (2 h instead of 30 min) →
-  6 refreshes/day → cuts cost 5×.
+- **墨水屏不能 demo 给别人看**。你跟同事说"我搞了个 AI 副屏"，他凑过来一看："就这？"。它的价值是**你日常用的累积感**，不是当下的 wow 效应
+- **第一次烧固件 ~10 分钟**。即使 Skill 全程引导，需要插 USB / 跑 PlatformIO / 等编译。买回来即用不可能（除非有人做 pre-flash 版本）
+- **改 widget 要 Agent 介入**。不像手机 widget 长按拖拽。但反过来这就是设计原则：让 Agent 当 dashboard 维护工
+- **e-ink 的 ghost**。GC16 全刷干净，A2 partial refresh 会留残影几秒。习惯就好
+- **触屏不是 iPad**。可以点 chip，但不要期待精细操作
 
-## Comparison to alternatives
+### 不舍得放下的瞬间
 
-| Approach | Pros | Cons |
-|---|---|---|
-| **Old tablet running a dashboard webpage** | Cheap, easy to set up | Power-hungry, distracting backlight, screen burn, needs Wi-Fi 24/7 |
-| **Vendor smart displays (Skylight, Lametric, TRMNL...)** | Polished UX | Closed ecosystem, monthly subscription typical, limited customisation |
-| **Sticky notes** | Zero cost, paper-tier focus | Manual, doesn't update, doesn't carry AI awareness |
-| **AI Desk Card** | Open, agent-driven, calm-tech, hackable | DIY assembly + Wi-Fi setup (one-time), hardware ~$90, requires an AI CLI |
+体验上，几个让人"哦原来是这种感觉"的瞬间：
 
-The honest positioning: this is a project for people who want a
-side display **driven by their existing AI workflow**, not a polished
-appliance. If you'd rather buy something off the shelf and not touch
-config, TRMNL exists. If you'd rather drive a panel from your own
-agent's plugin Skill, this is for you.
+- 第一次手动按"睡眠"，屏上慢慢出现你自己的名片，然后断电。这块屏从那刻起变成了**关于你的物件**，不只是工具
+- 早上桌前坐下，屏上还显示着昨晚 11 点的 quiet_hours 切过去的名片。你没动它一下，它知道该睡，也知道该醒
+- 推完 widget 后那个 ~150ms 的 chip 反色闪动 —— 你的物理触碰得到了物理回应。这是数字界面 99% 的时候没给你的东西
 
-## Differentiation summary
+---
 
-1. **Driven by AI agent plugin Skills, not a closed app.** Switch
-   agents anytime; switch data sources anytime; teach the AI to push
-   anything you want by writing a new widget schema.
-2. **Three-mode architecture covers desk-companion + truly-wireless
-   without compromise.** Same firmware, same UX, same widgets.
-3. **Sub-second refresh on LAN.** Most e-ink solutions are 5-30 s/frame;
-   ours is 0.2 s by combining server-side rendering + dirty-region
-   diff + raw HTTP push.
-4. **Agent-agnostic.** Plugin works with any AI CLI that supports the
-   plugin spec (Claude Code, Codex, Gemini, Aider, ...).
+## 四、预测
 
-## Roadmap
+### AI 硬件正在重新洗牌
 
-### v0.9 (likely next)
+2024 - 2026 这一波 AI 硬件浪潮里，几个明显的方向：
 
-- Touch dispatch firmware-side (settings page buttons fully clickable)
-- Captive portal Wi-Fi provisioning (no need for USB / BLE first)
-- More widget renderers (Pomodoro stats, RSS, IoT device state)
-- Multi-device support (`--device-name` flag on daemon)
+- **替代手机**：Rabbit R1 / Humane AI Pin / Friend 这类。目标是"少看手机"。问题是它们都要**抢你的注意力**才能展示自己有用
+- **替代会议室**：Otter / Granola / Plaud。AI 听会、做纪要。这条相对成熟，因为目标明确
+- **替代屏幕**：Vision Pro / Quest。空间计算。还在硬件性价比突破期
+- **常驻 ambient**：这块**几乎是空的**。Hyperdraw 之类的电子相框算半个，但都不接 AI
 
-### v1.0 (production-ready)
+我们押在 "常驻 ambient + AI 主动决策" 这个交叉点。原因：
 
-- OTA firmware updates over Wi-Fi
-- Standalone macOS app for daemon (LaunchAgent + menu bar UI)
-- Public widget marketplace / community schemas
-- Prebuilt firmware binaries (no PlatformIO needed for users)
+- **多数 AI 硬件都搞错了用户的诉求**：用户不是想要新设备，是想要**少切换设备**。常驻 ambient 不要求你换设备，它在你已经存在的桌面上加一块
+- **AI Agent 已经在你生活里了**。问题不是"如何引入 AI"，是"AI 知道的东西如何溢出 CLI 到物理世界"
+- **e-ink 形态被严重低估**。所有人都在追求 OLED + 60Hz + 触屏，但 ambient 设备的特性应该是"不打扰" —— 这正好是 e-ink 擅长的
 
-### v1.x (research)
+### 接下来 6-18 个月会发生的
 
-- BLE frame-data path repair (needs BLE sniffer hardware)
-- Windows / Linux daemon parity testing
-- Alternative hardware backends (Inkplate 10, Waveshare e-ink hat
-  drivers)
+- **会有更多人做类似形态**。市场会出现 1-3 个 "AI ambient e-ink 副屏" 产品，可能 SaaS 形态（订阅制）也可能开源
+- **Skill 生态会变成标准**。当下 Skill / Plugin / MCP 三个标准混战，但都在向"agent-agnostic tool"靠拢。1 年内会收敛
+- **硬件会更专用**。M5Paper 是通用 ESP32 + e-ink 拼装。会有公司做"AI-first e-ink 设备"：更好的电源管理、更优的 Wi-Fi、专用 e-ink 控制器、可能内置 NPU
+- **更高分辨率 + 更快 partial refresh**。e-ink 厂商（E Ink Holdings / Visionect）的下一代屏会把 partial refresh 推到 50ms 内，A2 ghost 大幅减轻。这会让"触屏点击 → 立即反馈"成为可能（现在我们用 ~150ms 才有响应）
+- **Multi-device sync**。一个用户多块屏 —— 工作桌、卧室、厨房 —— 共享 widget cache 但显示不同视图。会是用户的下一波诉求
 
-## Constraints worth knowing
+### 这个项目自己的预测
 
-- **2.4 GHz Wi-Fi only.** ESP32 doesn't do 5 GHz. If your router is
-  5 GHz-only the setup will fail; you need a 2.4 GHz SSID exposed.
-- **macOS-tested, Linux untested.** The daemon's transport / mDNS
-  / persistence layers all use OS-portable libraries (zeroconf,
-  bleak, pyserial, Pillow) but only macOS has been put through
-  real-device validation.
-- **No native Windows support yet.** Daemon would likely work via
-  WSL2 but not validated.
-- **One peer per daemon.** Multi-device support is roadmap work.
-- **CJK font is 3.5 MB.** Hardcoded in `data/cjk.ttf`. Other locales
-  need their own font drop-in.
+如果 6 个月后这个项目还活着，会变成这样：
 
-## License
+- **20-100 个用户**（不会大众化，但有铁杆）
+- **跟 Friend / Granola 类 AI 设备做集成**：会议结束自动把会议纪要 push 到桌面卡，下个会前 5 分钟自动 push agenda
+- **Widget marketplace**：用户提交 schema，社区 review，合并。会有几个 "wow 时刻" widget（比如把家里温湿度传感器 / Garmin 实时心率 / Strava 周训练量 接进来）
+- **WorkBuddy 等 Agent 平台的官方上架版本**：去掉硬件依赖部分的描述，纯 Skill 形态发出去
+- **不会做 PCBA / 量产**。这不是个硬件公司，是个 Skill。硬件用现成的
 
-GPL-3.0 with attribution clause. Code: yours to modify and redistribute
-under GPL-3.0. The attribution clause requires preserving credit to
-the original author (op7418) in derivative works.
+### 哪些预测可能错
 
-The vendored EPDGUI framework in the parent buddy project (referenced
-by some shared code) is MIT, © 2020 m5stack — see the parent repo's
-NOTICE.md.
+- 也许 e-ink 的劣势比想象的大，用户最终还是想要彩色 / 快速刷新 → 这个形态被淘汰
+- 也许 Skill 标准没收敛，每个 Agent 都搞自己的 → 我们要维护多个版本
+- 也许 AI 硬件就是注意力经济的延伸，"calm tech" 没人买单 → 我们错了
+- 也许 M5Paper V1.1 停产，没有继任，我们要重新适配 → 工程债
 
-## Contact / contributions
+每个预测都有反例。我们押的是"AI 进了生活之后，至少 10% 的用户会想要 ambient 出口"，**剩下的就是把这 10% 服务好**。
 
-Project lives at https://github.com/op7418/ai-desk-card. Issues and
-pull requests welcome. Hardware photos / videos especially welcome —
-helps anyone discovering the project see what they're getting into.
+---
+
+## 五、用户
+
+不是泛泛说"开发者"。具体描几个 persona：
+
+### Persona 1: 重度 AI Agent 用户
+
+> 张铭，独立开发者。每天 8 小时 Claude Code，把 AI Agent 当主要工作界面。屏幕上常年开 3-4 个 terminal + browser，每次抬头切 tab 都打断思路。
+
+**他的痛点**：context overhead。AI 知道他在做什么、todo 是什么、下个会几点，但这些信息散落在多个 tab，他要主动切换才能看到。
+
+**他怎么用**：装上之后，让 Agent 把 focus + next-meeting + pr-queue + ai-status 4 个 widget 长期常驻。一周后他完全不打开日历 app —— 抬头瞥屏就够了。
+
+**他的反馈**：第三周开始觉得"这东西有点上瘾"。第二台他放在客厅显示"今天专注的事 + Strava 周训练量"。
+
+### Persona 2: 知识工作者，不一定每天用 AI
+
+> 林菲，产品经理。用 Notion + 飞书 + 日历 + 微信。AI Agent 偶尔用（每周 2-3 次跑些数据分析）。
+
+**她的痛点**：信息散在各个 SaaS。每天早晨打开 5 个 tab 拼自己的 daily standup。AI 能帮她做但她不会写 prompt。
+
+**她怎么用**：装上之后用 Skill 引导她配 interests.yaml，把 inbox + calendar + todo 3 个固定 widget 设上。AI 每天早晨 8 点自动从飞书 / 微信 / 日历 / Notion 抓数据 push 上去。她从此不再做 morning routine。
+
+**她可能不会用**：自定义 widget。她需要的就是"看得到、不用动"。
+
+### Persona 3: 计算硬件爱好者
+
+> Alex，硬件 hacker，自己有 3D 打印机 + 烙铁。家里桌上有树莓派、Arduino、ESP32 板若干。喜欢自己折腾硬件。
+
+**他的痛点**：折腾过很多 dashboard 项目（Magic Mirror / homeassistant / Inkdrop），但**信息源始终要自己写脚本拉**。AI Agent 出现后他意识到 Agent 才是真正的"信息聚合层"。
+
+**他怎么用**：把 AI Desk Card 当成"Agent 的物理输出 IO"。会做 fork 加自己的 widget（家里温湿度 / 智能门锁状态 / NAS 容量），可能贡献 PR。
+
+**他给的反馈**：希望支持 Inkplate / Waveshare 等其他 e-ink 板。希望 widget schema 更开放。希望 ESP32 端能直接跑 LLM（不会发生，但他会问）。
+
+### Persona 4: 极简主义 / Calm Tech 信徒
+
+> Sara，独立写作者。手机灰度模式，Mac 永远 Do Not Disturb，桌上只有键盘和一杯咖啡。
+
+**她的痛点**：所有数字工具都在抢注意力。她**主动找 ambient、非交互式**的工具。
+
+**她怎么用**：只配一个 widget —— focus，显示"今天在写什么"。每天早晨自己更新一次。其他时间屏是黑白的、不动的，存在但不存在。
+
+**她代表的是**：这个项目的灵魂用户。不要在乎用户多不多，要在乎她为什么留下来。
+
+### 谁不该买
+
+诚实地说：
+
+- **想要 always-on 通知**：买 Apple Watch，不是这个
+- **想要彩色信息可视化（图表 / dashboard）**：买 ipad mini + Hyperdash 之类
+- **想要"AI 助理"对话**：买 Friend / Rabbit / 直接用手机
+- **不愿意烧固件**：等有人做 pre-flash 版本（不知道什么时候会有）
+- **想要"插上就能用"**：这是个 Skill + 硬件，需要 ~10 分钟入职。无脑插即用做不到
+
+### 用户分布预测
+
+如果这个项目有 100 个用户，大概是：
+
+- 50 个 Persona 1（重度 AI Agent 用户）— 最先发现
+- 25 个 Persona 3（硬件爱好者）— 会贡献 PR
+- 15 个 Persona 2（知识工作者）— 需要别人帮装
+- 10 个 Persona 4（calm tech）— 不发声但忠实
+
+---
+
+## 写在最后
+
+这个项目不试图替代什么。它在你已有的工作环境里加一块**安静的、知道你在干嘛的小屏**。
+
+它的成功标准不是"用户量级"，是"用户用了三个月之后，桌上还在"。
+
+如果你装上了用了一周就拔掉，我们设计错了。如果你用了三个月不舍得拿走，我们做对了。
+
+我们不知道是哪一种，所以开源，让用户用脚投票。

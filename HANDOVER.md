@@ -1,459 +1,405 @@
-# AI Desk Card — Engineering Handover
+# AI Desk Card · 工程交接
 
-This document is for someone who just inherited the project and needs
-to ship the next iteration. It assumes you've already read
-[README.md](README.md). What you'll find here: how each piece is wired,
-where state lives, what's brittle, what's safe to touch, and the most
-useful commands you'll run while debugging.
+> 给下一个接手项目的人。读完应该能：跑起来、定位 bug、加 widget、改架构。
+> 前置阅读：[README.md](./README.md) 看产品定位，[PRODUCT.md](./PRODUCT.md) 看为什么这样设计。
 
-## Current state at handover (v0.8)
+---
 
-- **Firmware version**: `CARD_VERSION = "0.8.0"` defined in
-  `platformio.ini` via `-DCARD_VERSION`.
-- **Daemon**: Python 3.9+ acceptable for serial-only; **Python 3.10+
-  required for the BLE path** (bleak's source uses `match` statements).
-  `plugin/scripts/start.sh` auto-selects PlatformIO's bundled Python
-  3.14 if present, otherwise falls back to system `python3`.
-- **Transports**: Wi-Fi (HTTP) > USB serial (chunked JSON @ 115200
-  baud) > BLE (NUS, chunked JSON for small commands; **frame data path
-  is broken** — see Known Issues).
-- **Three power-mode flows** all verified end-to-end on M5Paper V1.1:
-  architecture A (USB-powered, Wi-Fi always on), B (USB-serial only),
-  C (battery + BLE standby + Wi-Fi on demand).
+## 当前版本 (v0.9)
 
-## Architecture in one diagram
+- **固件**：`CARD_VERSION = "0.8.0"`（platformio.ini 里 `-DCARD_VERSION`），代码已加入 v0.9 触屏 poll / chip 反色 / WiFi 回程 POST，下次发版改成 0.9.0
+- **daemon**：Python 3.10+（BLE 路径用了 `match` 语句）。`plugin/scripts/start.sh` 优先选 PlatformIO 自带的 3.14，没有就用系统 `python3`
+- **Skill 入口**：根 `SKILL.md` 是 agent-agnostic 主入口，**不是** `plugin/plugin.json`。plugin/ 目录是 Claude Code slash 命令兼容层
+- **传输优先级**：Wi-Fi (HTTP) > USB serial (115200 baud chunked JSON) > BLE (NUS chunked JSON，仅小命令；**frame data 还是断的**，见已知问题)
+- **三种供电模式**全部端到端验过：A 常插电 Wi-Fi 长开 / B USB only / C 电池 + BLE 待机 + Wi-Fi 按需唤醒
+
+---
+
+## 一图看懂架构
 
 ```
-                 ┌──────────────────────────────────────────────┐
-                 │  M5Paper V1.1  (ESP32, 8 MB PSRAM, 16 MB flash) │
-                 │                                              │
-                 │  ┌── ble_bridge ──┐  ┌── wifi_bridge ──┐   │
-                 │  │ NUS GATT       │  │ NVS creds       │   │
-                 │  │ pair + passkey │  │ connect SM      │   │
-                 │  └────────────────┘  └─────────────────┘   │
-                 │  ┌── http_server (port 9880)         ─────┐ │
-                 │  │ POST /frame  POST /cmd  GET /status   │ │
-                 │  └──────────────┬─────────────────────────┘ │
-                 │  ┌──────────────▼ frame_receiver ─────────┐ │
-                 │  │   259 200 B PSRAM buffer + display    │ │
-                 │  │   full + region update support        │ │
-                 │  └────────────────────────────────────────┘ │
-                 │  ┌── M5GFX → e-ink panel (540×960 4bpp) ──┐ │
-                 │  └────────────────────────────────────────┘ │
-                 └──────────────────────────────────────────────┘
-                                   ▲
-                                   │ (one of)
-                                   │
-   ┌───────────────────────────────┴────────────────────────────────┐
-   │  daemon/card_daemon.py  (port 9877 HTTP API)                   │
-   │                                                                │
-   │  WiFiTransport ──── HTTP POST raw 4bpp to device :9880         │
-   │  SerialTransport ── chunked JSON over /dev/cu.usbserial-*      │
-   │  BLETransport ──── chunked JSON over NUS RX char               │
-   │       └─ Architecture C: temporarily WiFi-transport for push   │
-   │                                                                │
-   │  FrameDiff: PIL ImageChops.difference + getbbox + threshold    │
-   │  Persistence: TMPDIR/ai_desk_card_{last_frame.png, widget_     │
-   │                cache.json, daemon.log}                         │
-   │  mDNS discovery: zeroconf _ai-desk-card._tcp at startup        │
-   └────────────────────────────────────────────────────────────────┘
-                                   ▲
-                                   │ HTTP
-                                   │
-   ┌───────────────────────────────┴────────────────────────────────┐
-   │  plugin/                                                       │
-   │   commands/ (slash-command stubs)                              │
-   │   scripts/  (start/stop/status/sleep/wifi-setup wrappers)      │
-   │   skills/   (AI-facing playbooks: onboard / widget / wifi-     │
-   │              setup / refresh)                                  │
-   └────────────────────────────────────────────────────────────────┘
-                                   ▲
-                                   │
-   ┌───────────────────────────────┴────────────────────────────────┐
-   │  Any AI CLI (claude / codex / gemini / aider / ...)            │
-   │  Plugin slot: /card-onboard /card-widget /card-wifi-setup ...  │
-   └────────────────────────────────────────────────────────────────┘
+                ┌──────────────────────────────────────────────┐
+                │ M5Paper V1.1 · ESP32 · 8 MB PSRAM · 16 MB flash │
+                │                                              │
+                │  ┌── ble_bridge ──┐  ┌── wifi_bridge ──┐    │
+                │  │ NUS GATT       │  │ NVS creds       │    │
+                │  │ pair + passkey │  │ connect SM      │    │
+                │  └────────────────┘  └─────────────────┘    │
+                │  ┌── http_server (:9880) ─────────────────┐ │
+                │  │ POST /frame  POST /cmd  GET /status   │ │
+                │  │ + 缓存 daemon 的 peer IP                │ │
+                │  │ + httpPostJsonToDaemon() 回程通道       │ │
+                │  └──────────────┬─────────────────────────┘ │
+                │  ┌──────────────▼ frame_receiver ────────┐  │
+                │  │ 259 200 B PSRAM buffer + display      │  │
+                │  │ full + region update                  │  │
+                │  └───────────────────────────────────────┘  │
+                │  ┌── pollTouchAndEmit (50 Hz, GT911) ──┐    │
+                │  │ → {event:touch,x,y} via Serial+BLE+HTTP │
+                │  │ + 本地 flashChipAck (A2 partial)        │
+                │  └─────────────────────────────────────┘    │
+                │  ┌── M5GFX → 540×960 e-ink panel (4bpp) ─┐  │
+                │  └──────────────────────────────────────┘  │
+                └──────────────────────────────────────────────┘
+                                  ▲ (any of)
+                                  │
+   ┌──────────────────────────────┴──────────────────────────────┐
+   │ daemon/card_daemon.py (HTTP API @ 127.0.0.1:9877)            │
+   │                                                              │
+   │  TRANSPORT (one of):                                         │
+   │    WiFiTransport ── HTTP POST /frame (raw 4bpp)             │
+   │    SerialTransport ─ chunked JSON @ 115200                  │
+   │    BLETransport ──── chunked JSON @ NUS (frame data broken) │
+   │                                                              │
+   │  当 Wi-Fi 是主 transport，且 USB 也插着：                      │
+   │    _start_side_serial_reader() 另开只读 serial 收 status     │
+   │                                                              │
+   │  CardHandler routes:                                         │
+   │    POST /widget         → WIDGET_CACHE + schedule_push       │
+   │    POST /widgets/preview → render PNG                        │
+   │    POST /provision-wifi → forward cmd:wifi_set 给设备         │
+   │    POST /sleep          → 渲染名片 + cmd:sleep_now            │
+   │    POST /refresh        → schedule_push                       │
+   │    POST /firmware-probe → cmd:ping/owner，2.5s 等 ack         │
+   │    POST /status_report  → 设备回包，更新 DEVICE_TELEMETRY      │
+   │    POST /touch          → hit-test VIEW_HOT_ZONES → dispatch  │
+   │    GET  /pair-status    → {connected, transport}              │
+   │    GET  /heartbeat      → {alive, last_seen_s, active_xport} │
+   │                                                              │
+   │  后台线程：                                                    │
+   │    push_loop          coalesce dirty flag → render+push      │
+   │    keepalive_loop     5 min idle 重推一次防丢                  │
+   │    _burst_power_down_loop  arch C linger 后断 Wi-Fi          │
+   │    _quiet_hours_loop  到 quiet_hours.start 自动 sleep         │
+   │                                                              │
+   │  RX listeners (on_rx_byte → 解析 JSON 行 → 派发):              │
+   │    _telemetry_listener  ack:status → DEVICE_TELEMETRY        │
+   │    _touch_event_listener  event:touch → _internal_dispatch   │
+   │                                                              │
+   │  渲染：                                                        │
+   │    card_render.render_image()       widget 视图               │
+   │      + LAST_BOTTOM_BAR_HOT_ZONES 导出给 daemon                │
+   │    card_render_settings.render_settings_page()  设置页        │
+   │    card_render_sleep                电子名片                  │
+   └──────────────────────────────────────────────────────────────┘
+                                  ▲
+                                  │ POST / curl
+   ┌──────────────────────────────┴──────────────────────────────┐
+   │ Skill (根 SKILL.md) — agent 主入口                           │
+   │                                                              │
+   │  1. 收到 trigger → bash scripts/state.sh 探测                 │
+   │  2. 按决策表选 flows/0X_*.md 子流程                            │
+   │  3. flows/*.md 描述 agent 该做啥（curl / shell / ask 用户）    │
+   │                                                              │
+   │  state.sh 输出 JSON:                                          │
+   │    hardware {pio, m5paper_usb}                                │
+   │    firmware {flashed, ours, version}                          │
+   │    daemon   {running, pid}                                    │
+   │    transport {connected, type}                                │
+   │    device   {alive, last_seen_s, active_transport, battery}  │
+   │    wifi     {provisioned, ip, port}                          │
+   │    interests {configured, path}                              │
+   └──────────────────────────────────────────────────────────────┘
 ```
 
-## Per-module map
+---
 
-### Firmware (`src/`)
+## 仓库布局
 
-| File | Lines | Purpose |
-|---|---|---|
-| `main.cpp` | ~470 | Boot, dispatch loop, command router, status_report emitter, power-mode detection (charging > 4150 mV heuristic), BLE passkey overlay UI. |
-| `frame_receiver.{h,cpp}` | ~280 | PSRAM-buffered frame ingest. Two paths: `frame_begin → frame_chunk[] → frame_end` (full) and `frame_region_begin → ... → frame_end` (partial). Shared `frameBuffer()` exposed so http_server can write into the same PSRAM region; `frameAcquire/ReleaseBuffer()` is a non-recursive busy flag. |
-| `ble_bridge.{h,cpp}` | ~180 | NUS GATT server (NUS_SERVICE_UUID `6e400001-…`). Auth: ESP_LE_AUTH_REQ_SC_MITM_BOND. Characteristics use ENC_MITM perm (tightened from plain ENC during v0.7). Scan response carries explicit local name to override NVS-cached name from prior firmware. |
-| `wifi_bridge.{h,cpp}` | ~170 | NVS-backed credentials (Preferences ns `"wifi"`). State machine: UNCONFIGURED / CONNECTING / CONNECTED / DISCONNECTED / SLEPT. 12 s connect timeout, 30 s retry gap. `wifiAutoConnect()` for architecture A boot; `wifiWakeNow()` / `wifiPowerDown()` for architecture C. |
-| `http_server.{h,cpp}` | ~230 | Hand-rolled HTTP/1.1 parser on WiFiServer. Routes: `POST /frame` (raw 4bpp body + optional `?x=&y=&w=&h=`), `POST /cmd` (JSON dispatched via `dispatchCmd()`), `GET /status` (battery / firmware / mac / uptime / wifi). |
-| `widgets.{h,cpp}` | ~250 | Legacy v0.5 on-device widget cache. Kept so older daemons still parse without crashing; rendering happens daemon-side now (v0.6+). |
+```
+ai-desk-card/
+├── SKILL.md                  ← agent 入口
+├── scripts/state.sh          ← 状态探测，组合 probe.sh + heartbeat + interests
+├── flows/0[1-7]_*.md         ← 7 个子流程
+├── plugin/                   ← Claude Code 兼容层
+│   ├── plugin.json           ← 给 Claude Code 识别
+│   ├── commands/             ← /card-* slash 命令
+│   ├── scripts/              ← start.sh / stop.sh / status.sh / install.sh
+│   └── skills/               ← sub-skill (主 SKILL.md 引用其中部分内容)
+│       ├── card-onboard/scripts/probe.sh     ← 被 state.sh 包了一层
+│       ├── card-widget/schemas/*.schema.json ← 16 widget 的 JSON schema
+│       ├── card-widget/themes/               ← Pillow 主题
+│       ├── card-wifi-setup/                  ← Wi-Fi 配网入口
+│       └── card-refresh/                     ← cron 兜底 + AI loop
+├── daemon/
+│   ├── card_daemon.py         ← 主进程
+│   ├── card_render.py         ← widget 视图渲染 (1055 行)
+│   ├── card_render_settings.py ← 设置页渲染
+│   └── card_render_sleep.py    ← 名片渲染
+├── src/                       ← 固件
+│   ├── main.cpp               ← 命令派发 + loop + 触屏 poll + sleep
+│   ├── frame_receiver.{h,cpp} ← PSRAM 帧缓冲 + 显示
+│   ├── http_server.{h,cpp}    ← :9880 HTTP server + 回程 POST helper
+│   ├── ble_bridge.{h,cpp}     ← NUS GATT + 配对
+│   ├── wifi_bridge.{h,cpp}    ← NVS creds + 连接状态机
+│   └── widgets.{h,cpp}        ← v0.5 fallback (基本废弃)
+├── assets/profile.yaml        ← 你的电子名片
+├── data/cjk.ttf               ← 烧到 LittleFS
+├── partitions.csv             ← 给 CJK 字体留分区
+└── platformio.ini             ← env:card
+```
 
-Build: `pio run -e card`. Compiles to `~1.75 MB` flash (55 %) + 96 KB RAM
-(29 %). LittleFS partition holds the CJK font, flashed once via
-`pio run -e card -t uploadfs`.
+---
 
-### Daemon (`daemon/`)
-
-| File | Purpose |
-|---|---|
-| `card_daemon.py` | Main daemon (~1300 lines). HTTP API on 127.0.0.1:9877, transport classes, frame push pipeline, FrameDiff, mDNS discovery, telemetry listener, settings page + sleep page dispatchers. |
-| `card_render.py` | PIL-based widget renderer. `render_image(snapshot, status=None)` is the entry point; `to_4bpp_packed(img)` packs to M5EPD's 4-bit packed grayscale (2 px / byte, 0 = white, 15 = black). |
-| `card_render_settings.py` | Full-screen settings page (DEVICE / CONNECTION / Wi-Fi / ACTIONS sections). Returns hot zones for touch routing (firmware-side touch dispatch is v0.9 work). |
-| `card_render_sleep.py` | Digital business-card sleep frame. Reads `assets/profile.yaml`. |
-
-**HTTP endpoints exposed by daemon** (port 9877):
-
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/widget` | Push or replace one widget |
-| DELETE | `/widget?slot=X` | Clear a slot (no `slot` arg = clear all) |
-| GET | `/widget` | Return cache snapshot |
-| POST | `/widgets/preview` | Render to PNG without device |
-| GET | `/pair-status` | `{connected, transport}` |
-| GET | `/version` | Daemon version string |
-| POST | `/refresh` | Force re-push current cache |
-| POST | `/restart` | Forward cmd:restart to device |
-| POST | `/sleep` | Render sleep card → push → cmd:sleep_now |
-| POST | `/settings` | Switch to full-screen settings view |
-| POST | `/back` | Return to widget view |
-| POST | `/firmware-probe` | Send cmd:owner + cmd:ping; report device fw / mac / battery |
-| POST | `/status_report` | Manual telemetry injection (mainly for testing; firmware reports via BLE) |
-| POST | `/provision-wifi` | Forward `{ssid, password}` to device as cmd:wifi_set |
-| POST | `/touch` | Map `{x, y}` to a hot zone action (used by v0.9 touch dispatch) |
-| POST | `/unpair` | Forward cmd:unpair (clear bond) |
-
-### Plugin (`plugin/`)
-
-Standard plugin-shape: `commands/` (slash stubs), `scripts/` (wrappers),
-`skills/` (AI playbooks with frontmatter). All slash commands the user
-runs go through one of `plugin/scripts/*.sh`.
-
-| Skill | Role |
-|---|---|
-| `card-onboard` | First-time setup decision tree. `scripts/probe.sh` outputs structured JSON; SKILL.md walks the AI through branches G / A / B / C / D / E / F / Z. |
-| `card-widget` | AI's reference for the 16 widget types + the 4-slot layout grid + push-frequency etiquette. |
-| `card-wifi-setup` | Privacy-aware Wi-Fi provisioning. Handles the SSID-vs-MAC misunderstanding the user actually hit in early testing. |
-| `card-refresh` | Cron entry point + per-data-source fetch strategy. AI-CLI-agnostic: `$AI_CLI` or auto-pick from `{claude, codex, gemini, aider}`. |
-
-### Persistence
-
-The daemon stashes state to `$TMPDIR` (macOS: `/var/folders/.../T/`,
-Linux: `/tmp/`):
-
-| File | What |
-|---|---|
-| `ai_desk_card_last_frame.png` | Last successfully rendered frame, used as the diff baseline. Persists across daemon restarts. Cleared on detected device reboot (uptime drop). |
-| `ai_desk_card_widget_cache.json` | WIDGET_CACHE snapshot. Restored on daemon start so a USB→Wi-Fi transport switch doesn't dump current widgets. |
-| `ai_desk_card_daemon.log` | Daemon stdout/stderr. `~10 KB/day` typical. |
-
-User-level config:
-
-- `~/.card-refresh.yaml` (optional) — used by `fallback_refresh.py`.
-  Keys: `location`, `repo_path`.
-- `~/.ai-desk-card-refresh.log` — cron refresh log.
-
-Device-side persistence (NVS):
-
-- Namespace `"wifi"`: keys `ssid`, `pass`.
-- BLE bonding state (managed by Bluedroid).
-
-## Build & deploy workflow
-
-### First-time flash
+## v0.9 端到端验证（开发机起步流程）
 
 ```bash
+# 1. 装 PlatformIO（系统级一次）
+pipx install platformio
+
+# 2. clone 项目
+git clone https://github.com/op7418/ai-desk-card.git
 cd ai-desk-card
-pio run -e card -t uploadfs           # CJK font → LittleFS
-pio run -e card -t upload             # firmware → main partition
-```
 
-### Iterative firmware change
+# 3. 编译（首次会拉 ESP32 toolchain，~5min）
+pio run -e card
 
-```bash
-pkill -f card_daemon.py               # release the serial port
-pio run -e card -t upload             # ~30 s
-bash plugin/scripts/start.sh          # daemon back up
-```
+# 4. 设备 USB 连接，烧 CJK 字体（首次必须）
+pio run -e card -t uploadfs
 
-### Iterative daemon change (no firmware reflash needed)
+# 5. 烧固件
+pio run -e card -t upload
 
-```bash
-# card_render.py edits hot-reload via importlib.reload() — no daemon restart needed
-# card_daemon.py / card_render_settings.py / card_render_sleep.py edits do require restart:
-/card-stop && /card-start
-```
+# 6. 启动 daemon
+bash plugin/scripts/start.sh
 
-### Switching transports
+# 7. 看状态
+bash scripts/state.sh | python3 -m json.tool
 
-The daemon picks transport once at startup (Wi-Fi > USB > BLE). To
-change, restart it:
-
-```bash
-/card-stop && /card-start    # auto re-pick
-```
-
-Force a specific transport:
-
-```bash
-python3 daemon/card_daemon.py --transport wifi    # require mDNS peer
-python3 daemon/card_daemon.py --transport serial  # require /dev/cu.usbserial-*
-python3 daemon/card_daemon.py --transport ble     # fall back to BLE only
-```
-
-## Wire protocol cheat sheet
-
-### Serial / BLE — line-based JSON
-
-Each line is one JSON object terminated by `\n`. Device buffers up to
-8192 bytes per line.
-
-**Daemon → device:**
-
-```
-{"cmd":"owner","name":"…"}
-{"cmd":"ping"}
-{"cmd":"unpair"}
-{"cmd":"restart"}
-{"cmd":"sleep_now","wake_after_sec":0}
-{"cmd":"wifi_set","ssid":"…","password":"…"}
-{"cmd":"wifi_wake_now"}
-{"cmd":"wifi_power_down"}
-{"cmd":"frame_begin","fid":N,"w":540,"h":960,"bpp":4,"chunks":K,"crc":X}
-{"cmd":"frame_region_begin","fid":N,"x":X,"y":Y,"w":W,"h":H,"bpp":4,"chunks":K,"crc":X}
-{"cmd":"frame_chunk","fid":N,"seq":S,"data":"<base64 of 2 KB raw>"}
-{"cmd":"frame_end","fid":N}
-{"time":[unix_ts,tz_offset_sec]}
-```
-
-**Device → daemon (notifications):**
-
-```
-{"ack":"owner","ok":true}
-{"ack":"unpair","ok":true}
-{"ack":"restart","ok":true}
-{"ack":"wifi_set","ok":true,"ssid":"…"}
-{"ack":"wifi_wake_now","ok":true}
-{"ack":"wifi_power_down","ok":true}
-{"ack":"paired","ok":true}                     # passkey cleared
-{"ack":"status","fw":"…","proto":1,"mac":"…","uptime_s":N,
- "battery_pct":N,"battery_mv":N,"on_usb":bool,
- "wifi_connected":bool,"wifi_ssid":"…","wifi_ip":"…","wifi_rssi":N}
-```
-
-`ack:status` fires periodically (~60 s) and immediately after Wi-Fi
-state change or in response to `cmd:ping`.
-
-### Wi-Fi — HTTP on device port 9880
-
-```
-POST /frame                         body = 259200 raw bytes (4bpp full)
-POST /frame?x=X&y=Y&w=W&h=H         body = W*H/2 raw bytes (4bpp region)
-POST /cmd                           body = JSON command (same shape as serial)
-GET  /status                        returns JSON status report
-```
-
-Frame body is plain bytes (no chunking, no base64). 250 KB full frame
-on a typical home LAN: about 2 seconds; typical region: about 0.2 s.
-
-## Known issues + workarounds
-
-### 1. BLE frame data: silent drop after first chunk
-
-Daemon's `write_gatt_char(..., response=True)` returns ACK successfully,
-but ESP32's `RxCallbacks::onWrite()` never fires for the second/third
-write in a burst. macOS CoreBluetooth doesn't expose tracing; the
-proximate cause is uncertain (Bluedroid prepared-write handling vs
-macOS retry semantics).
-
-**Workaround**: the daemon's `push_frame_bytes()` short-circuits BLE
-transport by sending `cmd:wifi_wake_now`, switching to a temporary
-WiFiTransport for the frame, then power-cycling Wi-Fi back off. This
-is architecture C and works reliably (~5 s cold wake + 0.2 s push).
-
-**To revisit**: would need a BLE sniffer (Nordic nRF52 dongle + Wireshark)
-to trace the air interface, or instrument the Bluedroid stack directly.
-
-### 2. Power-mode detection is voltage-based
-
-`isOnUSBPower()` returns `M5.getBatteryVoltage() > 4150` mV. Pure-battery
-M5Paper reads up to ~4200 mV when fully charged, so freshly-unplugged
-devices look like USB-powered for the first few minutes. This affects
-architecture C selection at boot — wrong arch picked → daemon doesn't
-trigger BLE wake.
-
-**Workaround**: just wait until battery drops below 4150 mV (minutes),
-or manually send `cmd:wifi_power_down` to force the radio off.
-
-**To revisit**: M5Paper has a USB VBUS pin on the PCB (GPIO35 or
-similar — check schematic). Direct GPIO read would be precise.
-
-### 3. Daemon writes log to `$TMPDIR`, not `/tmp`
-
-On macOS `$TMPDIR` is `/var/folders/<hash>/T/`, not `/tmp`. Skill docs
-that hard-code `/tmp/ai_desk_card_daemon.log` were a bug; current files
-use `${TMPDIR:-/tmp}/`. **Don't hard-code `/tmp` in new code.**
-
-### 4. macOS Bluetooth UI doesn't list GATT-only peripherals
-
-System Settings > Bluetooth shows HID / audio / Apple-accessory class
-devices only; our NUS-based peripheral never appears in the "nearby
-devices" list. Pair has to be initiated via `bleak.connect()` from the
-daemon — macOS then prompts (or auto-pairs Just Works depending on IO
-capabilities).
-
-### 5. Dirty-region diff bbox can balloon
-
-`ImageChops.difference + getbbox` returns the smallest axis-aligned
-rectangle. Two small changes far apart → bbox spans both. The 50 %
-threshold falls back to full frame in those cases. This is by design,
-but worth knowing if you see surprising full-frame pushes for what
-look like small UI changes (the bar's transport label change + a
-widget update is a typical trigger).
-
-### 6. v0.5 widget renderer still compiles
-
-`src/widgets.{h,cpp}` is dead code in v0.6+ but stays compiled so older
-daemons that send the legacy `widget_set` JSON don't crash the device.
-Can be removed once you're confident no one's running an old daemon.
-
-## Debugging recipes
-
-### "I just pushed but nothing changed on screen"
-
-```bash
-LOG="${TMPDIR:-/tmp}/ai_desk_card_daemon.log"
-tail -30 "$LOG" | grep -E '\[diff\]|\[frame\]|\[http\]|\[burst\]'
-```
-
-Expected line for a successful push:
-
-```
-[diff] region (X,Y W×H) = NB vs full 259200B (X%)
-[frame] http push fid=N ... ok          # Wi-Fi
-# or:
-[frame] pushed fid=N NB region(...) in K chunks (S.SSs)
-```
-
-If you see `[diff] noop`, the new frame is pixel-identical to the
-persisted last frame. To force a push, delete the persist file:
-
-```bash
-rm "${TMPDIR:-/tmp}/ai_desk_card_last_frame.png"
-curl -X POST http://127.0.0.1:9877/refresh
-```
-
-### "Device shows boot splash forever"
-
-The daemon isn't connected. Run:
-
-```bash
-bash plugin/skills/card-onboard/scripts/probe.sh
-```
-
-Read the JSON. `daemon.running == false` → `/card-start`. `transport.connected
-== false && serial_ports == []` → check USB cable; or Wi-Fi isn't joined
-yet (run `/card-wifi-setup`).
-
-### "Wi-Fi connect keeps failing"
-
-```bash
-tail -30 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log" | grep wifi
-```
-
-Status codes from `[wifi] connect timeout (status=N)`:
-
-- `1` = SSID not found (typo, or 5 GHz-only)
-- `4` = auth fail (wrong password)
-- `6` = DHCP fail (router issue)
-
-### "I want to see the rendered frame without flashing"
-
-```bash
-curl -sf -X POST http://127.0.0.1:9877/widgets/preview -o /tmp/preview.png
-open /tmp/preview.png
-```
-
-### "I want to push a test widget"
-
-```bash
-curl -sf -X POST http://127.0.0.1:9877/widget \
+# 8. 推个测试 widget
+curl -X POST http://127.0.0.1:9877/widget \
   -H 'Content-Type: application/json' \
-  -d '{"type":"scratch","slot":"middle",
-       "data":{"text":"hello world","source":"manual","age":"now"}}'
+  -d '{"slot":"top-left","type":"scratch","data":{"text":"hello"}}'
+
+# 9. 看屏上预览
+curl -X POST http://127.0.0.1:9877/widgets/preview -o /tmp/p.png && open /tmp/p.png
 ```
 
-### "I want to verify my firmware is running v0.8"
+---
+
+## 已知问题 + 解决方案
+
+### 1. BLE frame-data 路径断了
+
+**症状**：BLE 命令（owner / ping / wifi_set）能通；frame_chunk 写入 daemon 端完成，但设备 `onWrite` 不触发。
+
+**Workaround**：用 Wi-Fi 推帧（架构 A 或 C）。BLE 只用作小命令通道。
+
+**根因**（未确认）：NUS 长写包在 ESP32-NimBLE 栈下的 fragment 重组可能丢字节。需要抓包确认。
+
+### 2. M5Paper V1.1 长按旋钮 2s = 关机
+
+V1.1 砍掉了侧按键，改用旋转编码器。旋钮长按 2s 直接被 AXP192 切电源 — **固件来不及拦截**。
+
+**影响**：cmd:sleep_now 走的是 `esp_deep_sleep_start()`，名片渲染 → settling → 进 deep sleep 全程 OK。但用户硬关机时屏上停在关机前那一帧，**不是名片**。
+
+**Plan C（未做）**：在 setup() 拦截 AXP power button 长按 ISR，先发 cmd:want_sleep → daemon 推名片 → 再 deep sleep。约 100 行 + 时序调整。
+
+### 3. GT911 IRQ 在 V1.1 不稳定，必须直接 poll
+
+GT911 INT 接 GPIO 36（input-only，无内部上拉）。`M5.TP.available()` 在我们这块板上几乎不返回 true。改成 50 Hz 直接 `M5.TP.update()` 轮询 I2C。开销 ~1ms/poll，可忽略。
+
+### 4. `GT911::getFingerNum()` 释放后返回 stale 值
+
+M5EPD 库的 GT911::update() 在新数据 num=0 时只置 `_is_finger_up=true`，**`_num` 不重置**。所以 `getFingerNum() > 0` 在 finger lift 之后还是 true。
+
+**正确检测**：用 `(getFingerNum() > 0) && !isFingerUp()` 作为 "fresh press"。release 检测用 "最近 200ms 没有 fresh press" 作为超时。`isFingerUp()` 是 flag-consuming，调一次就清。
+
+### 5. `WiFiTransport.connected()` sticky-false
+
+之前 `connected()` 只看 `_connect_ok` 缓存。单次 POST 超时（比如 cmd:sleep_now 时设备已经在 deep_sleep settling）就把 `_connect_ok` 锁死成 False，后续所有 push 都被 `push_loop` 的 `if not TRANSPORT.connected()` 跳过 → 永久 deadlock。
+
+**修复**：`connected()` 缓存为 False 时主动开一个 0.5s TCP probe 重测（card_daemon.py:194）。
+
+### 6. mDNS 探测 2.5s 太短
+
+设备刚 reboot → Wi-Fi reassoc → mDNS advertise 总共 ~5-6s。daemon 重启时如果只等 2.5s 找不到 peer，会降级到 USB serial（32s 一帧）。**改成 8s**（card_daemon.py:1378）。
+
+### 7. 持久化 last_frame.png 不识别设备重启
+
+daemon 起来从磁盘 load `${TMPDIR}/ai_desk_card_last_frame.png`，以为是设备当前画面。但设备如果在两次 daemon 启动之间 reboot 过，实际画面是 boot splash。diff 结果是 144×33 的底栏，daemon 只推了那一小块 → 设备永远卡 splash。
+
+**修复**：`_telemetry_listener` 现在在收到第一个 status_report 且 uptime<60s 时，主动 `reset_frame_diff() + schedule_push()` 强推全帧。
+
+### 8. Arch A 没回程通道
+
+当 TRANSPORT 是 WiFiTransport 时，daemon 没监听 Serial/BLE，**收不到设备的 status_report**。所以 device.alive 永远 false。
+
+**修复 1**：firmware 在 wifi_connected 时也 POST `/status_report` 给 daemon（IP 从最近的 inbound /frame 请求 cache）。
+
+**修复 2**：daemon 启动时如果 TRANSPORT 是 WiFi 且 USB 也插着，开 `_start_side_serial_reader()` 只读 serial 当回程通道。
+
+两种修复并存，任意一个生效都能让 heartbeat 工作。
+
+### 9. ESP32 baud 切换不可靠
+
+不要在固件里中途切 Serial baud。固件 + daemon 都固定 115200。
+
+### 10. 默认 partition table 不够大
+
+我们改了 `partitions.csv` 给 LittleFS 留了 1.5MB（CJK 字体 ~1MB）。如果 board upload max_size 报错，先 `pio run -e card -t erase` 再 `uploadfs`+`upload`。
+
+### 11. CJK TTF glyph 黑名单
+
+`data/cjk.ttf` 不包含 ▢ ▶ ✎ ♪ ↑ ↓ ● ○ — … °。`PIL.textlength()` 对 missing glyph 撒谎导致 overflow，最后看到 widget 裁掉一半。
+
+**注意**：daemon 渲染时用的是 PingFang（系统字体），有这些 glyph；只有固件本地渲染（boot splash、passkey overlay、chip flash）受 cjk.ttf 限制。
+
+---
+
+## 调试 recipes
+
+### "Daemon 起不来"
 
 ```bash
-curl -sf -X POST http://127.0.0.1:9877/firmware-probe | python3 -m json.tool
-# expect: ack.fw = "0.8.0"
-```
-
-## Open work / next iteration candidates
-
-In rough priority:
-
-1. **Touch dispatch firmware-side**. Daemon already returns hot zones
-   per render (`card_render_settings.HOT_ZONES`); the firmware needs
-   a touch poll → POST `/touch` to daemon → daemon maps to action.
-2. **BLE frame-data path**. Currently broken; architecture C papers
-   over it with Wi-Fi burst. With a BLE sniffer this could be made to
-   work for pure-BLE deployments (no Wi-Fi credential setup).
-3. **Power-mode detection accuracy**. GPIO-based VBUS detection
-   instead of voltage heuristic.
-4. **Captive portal Wi-Fi provisioning**. Currently provisioning
-   requires existing serial / BLE transport; first-time-out-of-the-box
-   user needs USB or BLE first. Captive portal would let them set
-   Wi-Fi via phone directly. About 150 LOC firmware.
-5. **OTA firmware updates over Wi-Fi**. ESP32 ArduinoOTA library;
-   would skip the USB-to-flash flow for non-first-time users.
-6. **More widget renderers**. The 16 we have are decent for desk
-   work; people will want more (Pomodoro stats, RSS, IoT device states).
-7. **Multiple-device support**. Daemon currently assumes one peer.
-   Probably wants a `--device-name` flag and per-device cache files.
-8. **Remove the legacy v0.5 widget cache** (`src/widgets.{h,cpp}`)
-   once enough time has passed.
-
-## Useful commands reference
-
-```bash
-# Daemon lifecycle
-/card-start         # auto-pick transport, start daemon
-/card-stop          # kill daemon, release port
-/card-status        # human-readable transport + cache state
-
-# Setup
-/card-onboard               # AI walks you through first-time setup
-/card-install               # build (if needed) + flash firmware
-/card-wifi-setup "SSID" pw  # provision Wi-Fi credentials
-
-# Day-to-day
-/card-widget        # AI pushes a widget
-/card-sleep         # name card → deep sleep
-/card-refresh       # cron entrypoint (one-shot AI run)
-
-# Manual HTTP poking
-curl http://127.0.0.1:9877/widget                              # cache snapshot
-curl http://127.0.0.1:9877/pair-status                         # transport state
-curl -X POST http://127.0.0.1:9877/firmware-probe              # full status
-curl -X POST http://127.0.0.1:9877/refresh                     # force re-push
-
-# When things are weird
 tail -30 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log"
-bash plugin/skills/card-onboard/scripts/probe.sh
 ```
 
-## Style + conventions
+常见：
 
-- **Wire format**: JSON lines for serial / BLE (`\n`-terminated). HTTP
-  for Wi-Fi.
-- **Logging**: daemon `log()` writes to stderr → captured by `start.sh`
-  into the rotating log file. Firmware uses `Serial.printf` which goes
-  to USB and also to BLE TX char (notifications).
-- **Persistence**: only at hard state boundaries. Don't litter `$TMPDIR`.
-- **AI-facing skill prose**: tell the AI what it *should* do, not what
-  the code does. Skill docs are read by AI agents, not by users.
-- **Slash commands**: stay in `/card-*` namespace.
-- **Versioning**: bump `CARD_VERSION` in `platformio.ini` + `plugin.json`
-  on every release. Minor (0.8 → 0.9) for new features; patch
-  (0.8.0 → 0.8.1) for bug fixes.
+- Serial port 被别的进程占（`lsof /dev/cu.usbserial-*`）
+- Python 3.10+ 缺失（BLE 路径要 match 语句）
+- 9877 端口占用（`lsof -i :9877`）
+
+### "设备在但 device.alive=false"
+
+```bash
+curl http://127.0.0.1:9877/heartbeat | python3 -m json.tool
+```
+
+- 主 TRANSPORT 是 Wi-Fi 且没 side-serial → 看 daemon 日志有没有 `[side-serial] reading` 行；没有就 daemon 启动时 USB 还没插，重启 daemon
+- 主 TRANSPORT 是 Wi-Fi 但 firmware 没把 daemon IP 缓存上 → 让 daemon 先推一次 frame（任何 widget 都行）；设备收到 /frame 时缓存 peer IP，下一个 status_report 自然回 POST
+- `device.last_seen_seconds > 90` → 设备睡死了/没电了/掉 Wi-Fi 了
+
+### "推完 widget 屏幕没变"
+
+```bash
+tail -50 "${TMPDIR:-/tmp}/ai_desk_card_daemon.log" | grep -E "frame|render|diff"
+```
+
+- `[render] no pixel change` → 你推的 widget 跟当前一模一样，daemon diff 觉得没变。换内容或先 DELETE /widget?slot=X 清掉
+- `[diff] region (..) ...` 但屏上没动 → 设备 chunk 解码失败，看 device 日志的 `[frame] CRC mismatch` 或 `base64 decode err`
+- `[wifi] frame: TimeoutError` → 设备 HTTP server 没响应；多半是 deep sleep 或 Wi-Fi 掉了
+
+### "触屏没反应"
+
+```bash
+tail -f "${TMPDIR:-/tmp}/ai_desk_card_daemon.log" | grep -E "touch"
+```
+
+按一下屏，看：
+
+1. `[dev<] [touch-debug] press x=.. y=..` — firmware 检测到 finger down 了吗
+2. `[dev<] [touch-debug] release x=.. y=.. hold=..` — 检测到 lift 了吗
+3. `[dev<] {"event":"touch",...}` 或 `[touch<] (..,..)` — event 上来了吗
+4. `[touch<] → settings` 或 `→ no zone match` — 派发结果
+
+每一步缺失对应不同 bug 域：1 缺 = GT911 I2C；2 缺 = 释放检测；3 缺 = serial/wifi 回程；4 缺 = VIEW_HOT_ZONES 没设置或 chip rect 不覆盖按下位置。
+
+### "想看屏上当前是什么"
+
+```bash
+curl -X POST http://127.0.0.1:9877/widgets/preview -o /tmp/p.png && open /tmp/p.png
+```
+
+走的是 daemon 的 `_widget_snapshot()` + render_image()，跟实际推的帧一致（设置页和 sleep card 用各自的 render 函数，preview 只渲染 widget 视图）。
+
+### 看实际推到设备上的帧
+
+daemon 启动时从磁盘 load 最后一帧，正常路径下也会持久化到：
+
+```bash
+ls -la "${TMPDIR:-/tmp}/ai_desk_card_last_frame.png"
+open "${TMPDIR:-/tmp}/ai_desk_card_last_frame.png"
+```
+
+注意：sleep card 推完后**不**写这个文件，所以 last_frame 反映的是 widget 视图，不是真实屏上画面。
+
+---
+
+## 加一个新 widget 类型
+
+1. **写 schema**：`plugin/skills/card-widget/schemas/<name>.schema.json`（参考 weather）
+2. **加到白名单**：`daemon/card_daemon.py:84` 的 `WIDGET_TYPES` 元组
+3. **写 painter**：`daemon/card_render.py` 加一个 `paint_<name>(d, rect, data, stale)` 函数 + 注册到 `PAINTERS` dict
+4. **加 README 给 agent 看**：`flows/05_push.md` 的 widget 类型表加一行
+5. **测试**：`curl -X POST /widgets/preview` 看效果，先不要推真机
+6. **glyph 检查**：你用的所有 unicode 字符都在 PingFang 里吗？（不在的话用 ASCII 替代或选另一个字体）
+
+不需要改固件 —— 服务端渲染，固件只 blit 像素。
+
+---
+
+## 改架构时注意
+
+- **新 cmd 加在哪**：`src/main.cpp` 的 `dispatchCmd()` 里 if-else。daemon 通过 `send_line({"cmd": ...})` 推。daemon 一侧不需要专门 hook，cmd 本身是 fire-and-forget 的；如果要 ack，firmware 在 cmd 处理结尾 `Serial.print` + `bleWrite` 发回去
+- **新 daemon endpoint**：`CardHandler.do_POST` / `do_GET` 里加 path 分支。loopback only 是约定（127.0.0.1 bind），别破坏
+- **状态加字段**：`DEVICE_TELEMETRY` 是单字典，全局可读；写要小心多线程（telemetry_listener 在 RX 线程，render_and_push 在 push_loop 线程）
+- **renderer 改动**：`card_render.py` 用 `importlib.reload` 热加载，每次 render_and_push 都重新 import；改了 daemon 不用重启，但 import 时间不能太长（建议 <100ms）
+- **新 transport**：继承 `Transport` 基类，实现 `start(on_byte, on_connect)` / `write(bytes)` / `connected() -> bool`。push_frame_bytes 有 isinstance 分支判断 fast path
+- **新 flow**：`flows/0X_<name>.md` 加文件 → SKILL.md 决策表加一行 → state.sh 探测必要字段
+- **改 chip 布局**：`daemon/card_render.py:paint_bottom_bar` 改 chip 文案 / rect / action。daemon 自动把新 rect 通过 `cmd:set_chips` 推给 firmware；firmware 自动 hit-test。**别去固件里 hard-code chip 位置**
+
+---
+
+## 性能数字（实测，M5Paper V1.1）
+
+| 操作 | 时间 |
+|---|---|
+| Wi-Fi HTTP push 全帧 (259200B) | 1.96-2.30 s |
+| Wi-Fi HTTP push region (144×33) | 0.09-0.27 s |
+| USB serial push 全帧 (chunked 2KB) | 32.62 s |
+| USB serial push region (144×33) | <1 s |
+| BLE 唤醒 Wi-Fi (架构 C) | 5-6 s |
+| Wi-Fi mDNS advertise after reboot | ~5-6 s |
+| GT911 一次 I2C poll | ~1 ms |
+| Touch press → flashChipAck (A2 partial) | ~150 ms |
+| EPD UpdateFull GC16 settling | ~700 ms（sleep_now 用 2500ms 保险）|
+| daemon render_image + 4bpp pack | ~50 ms |
+| Battery push cost (架构 C, 一次完整唤醒+推) | ~0.2 mAh |
+
+---
+
+## 历史决策（为什么不是别的设计）
+
+**为什么服务端渲染而不是设备端**
+设备端要支持任意字号 + 任意 unicode + 美观字体，固件 FreeType + 几兆字体常驻 RAM，光栈就难维护。Server-side 用 Python PIL，行业里 inkbird/Visionect 都这么做。代价是每帧要传 ~100-260KB，Wi-Fi 下没问题，BLE 慢但是 architecture C 的 burst 模式可接受。
+
+**为什么不直接拉开源 EPDGUI 框架**
+M5Paper_FactoryTest 的 EPDGUI ~2200 行 MIT 开源，提供完整 GUI 框架。最早想直接拉，但发现：（a）M5Paper V1.1 没侧键，他们的 BtnP 触发器不适用；（b）我们是 server-driven，不需要 GUI 框架；（c）他们的字号策略不适合 30-50cm 桌边瞥一眼场景。最后只借用了几个图标资源。
+
+**为什么 16 个 widget 而不是用户可自定义**
+开放 widget 自定义意味着 schema / 渲染 / 版本兼容都要做。先固定 16 个能覆盖 80% 用例的，后续按需扩展。
+
+**为什么不用 OTA**
+USB 烧固件 ~1min，Wi-Fi OTA 流程要做 manifest 校验 + sha256 + rollback，复杂度对一个 hobby 项目过高。需要时再做。
+
+**为什么 plugin/ 和 SKILL.md 共存**
+SKILL.md 是 agent-agnostic 主入口（Codex/Gemini/Aider 都能识别）。plugin/ 留着是为了 Claude Code 用户的 slash 命令便利（`/card-start` `/card-wifi-setup` 比 "ask agent" 直接）。两层共用底层 scripts，不重复。
+
+---
+
+## 安全 / 隐私
+
+- daemon 绑 **127.0.0.1**（loopback only）。LAN 上的设备 → daemon 回程仅通过 USB serial 侧通道，不开 LAN 端口
+- Wi-Fi 密码 → daemon → 设备 NVS 的链路上，**不写任何日志**（grep `daemon/card_daemon.py` 确认）
+- 没有任何 telemetry / phone-home。daemon 不联外网（设备的 mDNS 是 LAN broadcast）
+- `~/.ai-desk-card/interests.yaml` 包含用户偏好（city / repo path），**不要 commit 到 git**
+
+---
+
+## 下一个版本可能要做的
+
+- **Plan C 硬件关机拦截**：长按旋钮 → 拦 ISR → 推名片 → deep sleep
+- **BLE frame-data 修复**：找 NimBLE 长包重组那段 bug，让 architecture C 在 BLE-only 下也能推帧
+- **Multi-device sync**：多块 M5Paper 共享 widget cache，不同物理位置显示不同视图
+- **Captive portal Wi-Fi setup**：第一次开机起 SoftAP + 网页表单，不用 daemon
+- **Inkplate / Waveshare 支持**：抽象掉 panel driver，partition 大小 + 触屏 API 差异隔离
+- **Widget marketplace**：让用户提交 widget schema → 审 → 合并
+
+---
+
+## 联系
+
+- Issue / PR: https://github.com/op7418/ai-desk-card
+- 原作者: [@op7418](https://github.com/op7418)
