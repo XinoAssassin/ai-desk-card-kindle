@@ -139,6 +139,7 @@ void handleFrame(WiFiClient& c, const String& query, size_t contentLen) {
         writeError(c, 400, "Bad Request", "size != w*h*2");
         return;
     }
+    ledPulseInbound();   // green flash so user knows bytes are flowing
     // Allocate in PSRAM to avoid blowing DRAM on full 600×400×2 = 480KB
     uint8_t* buf = (uint8_t*)ps_malloc(expected);
     if (!buf) { writeError(c, 500, "Internal", "alloc fail"); return; }

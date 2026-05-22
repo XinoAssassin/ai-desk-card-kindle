@@ -1,30 +1,46 @@
 #include "feedback_led.h"
-#include <M5Unified.h>
+#include <Adafruit_NeoPixel.h>
 
-// M5Unified has a built-in LED API via M5.Power.setLed() on devices
-// with simple LEDs, but Paper Color's WS2812 chain needs raw bit-bang
-// or a NeoPixel lib. For minimal deps + reliable timing we use the
-// ESP32 RMT peripheral directly via Arduino's analogWrite-equivalent.
-// Until we wire up RMT, ledColor() is a no-op and the helpers below
-// just log to Serial — visual feedback comes from the panel and audio
-// alone for v1.
-//
-// TODO Phase 4.5: add proper WS2812 driving (esp32-hal-rmt-based).
+// Paper Color has 2 WS2812-class RGB LEDs daisy-chained on G21.
+// Adafruit_NeoPixel handles the strict 800 kHz timing via the RMT
+// peripheral on ESP32-S3.
+
+namespace {
+constexpr int LED_PIN   = 21;
+constexpr int LED_COUNT = 2;
+Adafruit_NeoPixel g_strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+void writeAll(uint8_t r, uint8_t g, uint8_t b) {
+    for (int i = 0; i < LED_COUNT; ++i)
+        g_strip.setPixelColor(i, g_strip.Color(r, g, b));
+    g_strip.show();
+}
+}   // namespace
 
 void ledInit() {
-    Serial.println("[led] init (stub — RMT/WS2812 driver TBD)");
+    g_strip.begin();
+    g_strip.setBrightness(80);   // 0-255; keep moderate for desk use
+    g_strip.clear();
+    g_strip.show();
+    Serial.println("[led] NeoPixel initialised (2 LEDs on G21)");
 }
 
-void ledColor(uint8_t r, uint8_t g, uint8_t b) {
-    (void)r; (void)g; (void)b;
-}
-
-void ledOff() {}
+void ledColor(uint8_t r, uint8_t g, uint8_t b) { writeAll(r, g, b); }
+void ledOff()                                  { writeAll(0, 0, 0); }
 
 void ledBlinkAck() {
-    Serial.println("[led] ack-blink (stub)");
+    // Short white flash — used as tap-ack for button presses.
+    writeAll(255, 255, 255);
+    delay(60);
+    writeAll(0, 0, 0);
 }
 
 void ledPulseInbound() {
-    Serial.println("[led] inbound-pulse (stub)");
+    // Single green pulse — called when /frame arrives. Visual nudge that
+    // bytes are flowing before the slow Spectra 6 refresh kicks in.
+    writeAll(0, 180, 60);
+    delay(40);
+    writeAll(0, 80, 30);
+    delay(40);
+    writeAll(0, 0, 0);
 }

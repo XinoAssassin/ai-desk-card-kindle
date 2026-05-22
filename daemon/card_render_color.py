@@ -370,6 +370,213 @@ def paint_break_reminder(d, rect, data, stale=False):
         d.text((cx, cy + ch - 36), adv, fill=COL["ink"], font=font(24))
 
 
+def paint_git_status(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "GIT", accent=COL["ink"])
+    x, y, w, h = rect
+    repo = data.get("repo_name", "")
+    branch = data.get("branch", "")
+    modified = data.get("modified", 0)
+    untracked = data.get("untracked", 0)
+    staged = data.get("staged", 0)
+    ahead = data.get("ahead", 0)
+    behind = data.get("behind", 0)
+    last_hash = data.get("last_commit_hash", "")
+    last_msg = data.get("last_commit_msg", "")
+
+    # repo on right side of title bar
+    if repo:
+        rw = d.textlength(repo, font=font(22))
+        d.text((x + w - 12 - rw, y + 3), repo, fill=COL["paper"], font=font(22))
+
+    # Branch as headline (big-ish)
+    d.text((cx, cy + 2), branch, fill=COL["blue"], font=font(28))
+
+    # Status counts inline. Color red when dirty, green when clean.
+    dirty = modified + untracked + staged
+    if dirty > 0:
+        parts = []
+        if modified:  parts.append(f"{modified}M")
+        if untracked: parts.append(f"{untracked}?")
+        if staged:    parts.append(f"{staged}+")
+        d.text((cx, cy + 40), "  ".join(parts), fill=COL["red"], font=font(22))
+    if ahead or behind:
+        a = f"↑{ahead}" if ahead else ""
+        b = f"↓{behind}" if behind else ""
+        line = f"{a}  {b}".strip()
+        d.text((cx + cw - 70, cy + 40), line,
+               fill=COL["yellow"] if ahead or behind else COL["ink"],
+               font=font(22))
+
+    # Last commit
+    if last_hash:
+        d.text((cx, cy + ch - 56), last_hash, fill=COL["muted"], font=font(20))
+    if last_msg:
+        msg = _truncate(d, last_msg, font(20), cw)
+        d.text((cx, cy + ch - 30), msg, fill=COL["ink"], font=font(20))
+
+
+def paint_inbox(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "INBOX", accent=COL["red"])
+    x, y, w, h = rect
+    total = data.get("total", 0)
+    sources = data.get("sources") or []
+    # Total big
+    if total:
+        tx = str(total)
+        tw = d.textlength(tx, font=font(56))
+        d.text((cx, cy + 2), tx,
+               fill=COL["red"] if total > 0 else COL["ink"],
+               font=font(56))
+        d.text((cx + int(tw) + 10, cy + 24), "未读",
+               fill=COL["ink"], font=font(22))
+    # Per-source under, max 3
+    for i, s in enumerate(sources[:3]):
+        sy = cy + 68 + i * 28
+        name = _truncate(d, s.get("name", ""), font(20), cw - 60)
+        cnt = str(s.get("count", 0))
+        d.text((cx, sy), name, fill=COL["ink"], font=font(20))
+        cw_n = d.textlength(cnt, font=font(20))
+        d.text((cx + cw - cw_n, sy), cnt,
+               fill=COL["red"] if s.get("count", 0) > 0 else COL["muted"],
+               font=font(20))
+
+
+def paint_messages(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "MESSAGES", accent=COL["blue"])
+    items = data.get("items") or []
+    # Max 2 items at this density
+    for i, it in enumerate(items[:2]):
+        py = cy + 4 + i * 64
+        sender = it.get("sender", "")
+        preview = it.get("preview", "")
+        age = it.get("age", "")
+        # Sender + age
+        d.text((cx, py), sender, fill=COL["blue"], font=font(24))
+        if age:
+            aw = d.textlength(age, font=font(20))
+            d.text((cx + cw - aw, py + 2), age,
+                   fill=COL["muted"], font=font(20))
+        # Preview truncated
+        if preview:
+            p = _truncate(d, preview, font(20), cw)
+            d.text((cx, py + 32), p, fill=COL["ink"], font=font(20))
+
+
+def paint_system(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "SYS", accent=COL["green"])
+    x, y, w, h = rect
+    cpu = data.get("cpu_pct")
+    mem = data.get("memory_pct")
+    disk = data.get("disk_pct")
+    bat = data.get("battery_pct")
+    if bat == 255: bat = None
+    # Up to 3 metrics, each as label + bar + percent
+    metrics = [m for m in [
+        ("CPU", cpu), ("MEM", mem), ("DISK", disk),
+    ] if m[1] is not None]
+    if bat is not None: metrics.append(("BAT", bat))
+    metrics = metrics[:3]
+
+    for i, (label, pct) in enumerate(metrics):
+        my = cy + 6 + i * 42
+        d.text((cx, my), label, fill=COL["ink"], font=font(22))
+        # Color codes: red >85, yellow 60-85, green <60. Battery flips
+        # (low = red).
+        if label == "BAT":
+            col = COL["red"] if pct <= 20 else (COL["yellow"] if pct <= 40 else COL["green"])
+        else:
+            col = COL["red"] if pct >= 85 else (COL["yellow"] if pct >= 60 else COL["green"])
+        bar_x = cx + 80
+        bar_w = cw - 130
+        d.rectangle([bar_x, my + 6, bar_x + bar_w, my + 24],
+                    outline=COL["ink"], width=1)
+        fill_px = int(bar_w * max(0, min(100, pct)) / 100)
+        d.rectangle([bar_x, my + 6, bar_x + fill_px, my + 24], fill=col)
+        d.text((cx + cw - 50, my), f"{pct}%", fill=col, font=font(22))
+
+
+def paint_scratch(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "NOTE", accent=COL["yellow"])
+    x, y, w, h = rect
+    source = data.get("source", "")
+    age = data.get("age", "")
+    text = data.get("text", "")
+    # Source / age in title
+    meta = " · ".join(p for p in [source, age] if p)
+    if meta:
+        mw = d.textlength(meta, font=font(18))
+        d.text((x + w - 12 - mw, y + 4), meta, fill=COL["ink"], font=font(18))
+    # Wrap text into lines of ~ cw width
+    f = font(22)
+    lines, cur = [], ""
+    for ch_ in text:
+        if d.textlength(cur + ch_, font=f) > cw and cur:
+            lines.append(cur); cur = ch_
+        else:
+            cur += ch_
+        if ch_ == "\n":
+            lines.append(cur.rstrip("\n")); cur = ""
+    if cur: lines.append(cur)
+    for i, ln in enumerate(lines[:4]):
+        d.text((cx, cy + 4 + i * 30), ln, fill=COL["ink"], font=f)
+
+
+def paint_now_playing(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "PLAYING", accent=COL["blue"])
+    x, y, w, h = rect
+    track = data.get("track", "")
+    artist = data.get("artist", "")
+    source = data.get("source", "")
+    pos = data.get("position_sec", 0) or 0
+    dur = data.get("duration_sec", 0) or 0
+    playing = data.get("playing", True)
+
+    if source:
+        sw = d.textlength(source, font=font(18))
+        d.text((x + w - 12 - sw, y + 4), source, fill=COL["paper"], font=font(18))
+    # Track name
+    track_t = _truncate(d, track, font(24), cw)
+    d.text((cx, cy + 4), track_t, fill=COL["ink"], font=font(24))
+    # Artist
+    if artist:
+        art = _truncate(d, artist, font(20), cw)
+        d.text((cx, cy + 36), art, fill=COL["muted"], font=font(20))
+    # Progress bar
+    if dur > 0:
+        by = cy + ch - 38
+        d.rectangle([cx, by, cx + cw, by + 14], outline=COL["ink"], width=1)
+        f = max(0, min(1.0, pos / dur))
+        d.rectangle([cx, by, cx + int(cw * f), by + 14], fill=COL["blue"])
+        mm = pos // 60; ss = pos % 60
+        dm = dur // 60; ds = dur % 60
+        d.text((cx, by + 18), f"{mm}:{ss:02d} / {dm}:{ds:02d}",
+               fill=COL["ink"], font=font(18))
+
+
+def paint_ai_tasks(d, rect, data, stale=False):
+    cx, cy, cw, ch = _slot_chrome(d, rect, "TASKS", accent=COL["blue"])
+    running = data.get("running", 0)
+    waiting = data.get("waiting", 0)
+    blocked = data.get("blocked", 0)
+    done = data.get("completed_today", 0)
+    # 2x2 mini-grid
+    cells = [
+        ("running", running, COL["green"]),
+        ("waiting", waiting, COL["yellow"]),
+        ("blocked", blocked, COL["red"]),
+        ("done",    done,    COL["ink"]),
+    ]
+    cell_w = cw // 2
+    cell_h = (ch - 4) // 2
+    for i, (label, val, col) in enumerate(cells):
+        col_idx = i % 2
+        row_idx = i // 2
+        ex = cx + col_idx * cell_w
+        ey = cy + 4 + row_idx * cell_h
+        d.text((ex, ey), str(val), fill=col, font=font(36))
+        d.text((ex + 56, ey + 16), label, fill=COL["ink"], font=font(18))
+
+
 PAINTERS = {
     "weather":        paint_weather,
     "focus":          paint_focus,
@@ -381,6 +588,13 @@ PAINTERS = {
     "deadlines":      paint_deadlines,
     "calendar":       paint_calendar,
     "break-reminder": paint_break_reminder,
+    "git-status":     paint_git_status,
+    "inbox":          paint_inbox,
+    "messages":       paint_messages,
+    "system":         paint_system,
+    "scratch":        paint_scratch,
+    "now-playing":    paint_now_playing,
+    "ai-tasks":       paint_ai_tasks,
 }
 
 def paint_empty(d, rect, label="—"):
