@@ -242,6 +242,20 @@ VALID_SLOTS = ("top-left", "top-right", "bottom-left", "bottom-right", "full")
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
 
+    def _check_allowed_peer(self) -> bool:
+        """Bind is 0.0.0.0 so the Color device can POST /button over LAN.
+        Restrict callers to: (a) loopback (agent on host) or (b) the
+        device's own IP. Anything else gets 403."""
+        peer = self.client_address[0]
+        # Loopback always allowed (agent → daemon on host).
+        if peer in ("127.0.0.1", "::1"):
+            return True
+        # The Color device itself is allowed.
+        if peer == DEVICE_IP:
+            return True
+        log(f"[security] rejected request from {peer} (not 127.0.0.1 or device)")
+        return False
+
     def _reply(self, code: int, obj):
         body = json.dumps(obj).encode()
         self.send_response(code)
@@ -257,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(body.decode()) if body else {}
 
     def do_GET(self):
+        if not self._check_allowed_peer():
+            return self._reply(403, {"error": "peer not allowed"})
         path = urlparse(self.path).path
         if path == "/widget":
             return self._reply(200, {"widgets": _widget_snapshot()})
@@ -280,6 +296,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._reply(404, {"error": f"unknown GET {path}"})
 
     def do_DELETE(self):
+        if not self._check_allowed_peer():
+            return self._reply(403, {"error": "peer not allowed"})
         path = urlparse(self.path).path
         if path == "/widget":
             with WIDGET_LOCK: WIDGET_CACHE.clear()
@@ -289,6 +307,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._reply(404, {"error": f"unknown DELETE {path}"})
 
     def do_POST(self):
+        if not self._check_allowed_peer():
+            return self._reply(403, {"error": "peer not allowed"})
         path = urlparse(self.path).path
         try:
             payload = self._read_json()
@@ -378,9 +398,15 @@ def main():
 
     threading.Thread(target=heartbeat_loop, daemon=True).start()
 
-    srv = ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler)
-    log(f"[http] listening on 127.0.0.1:{LISTEN_PORT}")
-    log("[ready] POST /widget to push, the device's buttons will dispatch back")
+    # Bind 0.0.0.0 so the Color device can POST /button over LAN — the
+    # firmware caches the daemon's LAN IP from inbound /frame requests
+    # and POSTs button events back to that IP:9877. Loopback-only
+    # binding would make the device events go to /dev/null. The peer
+    # allowlist in Handler.* keeps strangers out.
+    srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
+    log(f"[http] listening on 0.0.0.0:{LISTEN_PORT} "
+        f"(allowlist: 127.0.0.1 + device {DEVICE_IP})")
+    log("[ready] POST /widget to push, device buttons dispatch back via LAN")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
