@@ -124,44 +124,53 @@ static void emitStatusReport() {
 // Touch poll. Detects single-tap (finger down → up within 30-2000 ms) and
 // emits one JSON line per tap. Daemon's RX listener maps (x,y) to chip
 // actions via VIEW_HOT_ZONES (back / settings / refresh / sleep / restart).
+//
+// API order matters and isn't documented well — match the official
+// M5EPD/examples/Basics/TOUCH.ino pattern:
+//   1. available()  gates on the GT911 IRQ flag (cheap, returns false fast)
+//   2. update()     reads fresh coords + finger count over I2C
+//   3. read state   getFingerNum / readFinger
+// Do NOT call flush() — it zeroes _num and _is_finger_up, wiping the
+// state we just spent the I2C read to obtain (the bug that made this
+// poll appear dead for a whole flash cycle).
 static void pollTouchAndEmit() {
     static bool s_was_down = false;
     static uint16_t s_x = 0, s_y = 0;
     static uint32_t s_down_ms = 0;
 
-    M5.TP.update();
-    if (!M5.TP.available()) return;
-    M5.TP.flush();   // clear interrupt latch so next sample is fresh
+    if (!M5.TP.available()) return;     // 1. IRQ gate
+    M5.TP.update();                     // 2. refresh state from I2C
 
-    bool down = !M5.TP.isFingerUp();
-    if (down && M5.TP.getFingerNum() > 0) {
+    bool finger_present = M5.TP.getFingerNum() > 0;
+    if (finger_present) {
         tp_finger_t f = M5.TP.readFinger(0);
         s_x = f.x; s_y = f.y;
-        if (!s_was_down) s_down_ms = millis();
-        s_was_down = true;
-    } else if (!down && s_was_down) {
-        s_was_down = false;
-        uint32_t hold = millis() - s_down_ms;
-        if (hold < 30 || hold > 2000) return;       // glitch or long-press
-        char buf[96];
-        // Two payload shapes: line-form for serial/BLE (newline-delimited),
-        // dict-form for HTTP (no trailing newline). Build the dict body
-        // first, then the line-form is just body + '\n'.
-        int n = snprintf(buf, sizeof(buf),
-            "{\"x\":%u,\"y\":%u,\"hold_ms\":%lu}",
-            (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
-        if (n > 0) {
-            char line[128];
-            int ln = snprintf(line, sizeof(line),
-                              "{\"event\":\"touch\",\"x\":%u,\"y\":%u,"
-                              "\"hold_ms\":%lu}\n",
-                              (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
-            Serial.print(line);
-            bleWrite((const uint8_t*)line, (size_t)ln);
-            if (wifiConnected() && httpDaemonIp()[0] != 0) {
-                httpPostJsonToDaemon("/touch", buf);
-            }
+        if (!s_was_down) {
+            s_down_ms = millis();
+            s_was_down = true;
         }
+        return;
+    }
+
+    if (!s_was_down) return;            // lift IRQ without prior down — ignore
+    s_was_down = false;
+    uint32_t hold = millis() - s_down_ms;
+    if (hold < 30 || hold > 2000) return;   // glitch / long-press → skip
+
+    char body[96];
+    int bn = snprintf(body, sizeof(body),
+                      "{\"x\":%u,\"y\":%u,\"hold_ms\":%lu}",
+                      (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
+    if (bn <= 0) return;
+
+    char line[128];
+    int ln = snprintf(line, sizeof(line),
+                      "{\"event\":\"touch\",\"x\":%u,\"y\":%u,\"hold_ms\":%lu}\n",
+                      (unsigned)s_x, (unsigned)s_y, (unsigned long)hold);
+    Serial.print(line);
+    bleWrite((const uint8_t*)line, (size_t)ln);
+    if (wifiConnected() && httpDaemonIp()[0] != 0) {
+        httpPostJsonToDaemon("/touch", body);
     }
 }
 

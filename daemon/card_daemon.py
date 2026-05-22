@@ -361,6 +361,17 @@ def _telemetry_listener(line: str):
                 log(f"[diff] device reboot detected (uptime {prev}s → {s}s) "
                     f"— resetting frame diff cache")
                 reset_frame_diff()
+                schedule_push()    # repaint widgets onto fresh boot splash
+            # First status_report this daemon session AND device just
+            # booted: our persisted last_frame.png is from the previous
+            # daemon run, but the device's actual framebuffer is the boot
+            # splash. Without resetting, diff would compute a tiny bounding
+            # box and only push that — leaving the device on the splash.
+            elif prev == 0 and s < 60:
+                log(f"[diff] first status_report (uptime {s}s) — assuming "
+                    f"persisted last_frame is stale, forcing full push")
+                reset_frame_diff()
+                schedule_push()
             DEVICE_TELEMETRY["_uptime_s_raw"] = s
         except (TypeError, ValueError):
             pass
