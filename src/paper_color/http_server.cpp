@@ -2,6 +2,7 @@
 #include "wifi_bridge.h"
 #include "sht40.h"
 #include "feedback_led.h"
+#include "audio.h"
 
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -183,9 +184,38 @@ void handleClient(WiFiClient c) {
     int qi = basePath.indexOf('?');
     if (qi >= 0) basePath = basePath.substring(0, qi);
 
-    if (method == "GET"  && basePath == "/status")          handleStatus(c);
+    if (method == "GET"  && basePath == "/status")           handleStatus(c);
     else if (method == "POST" && basePath == "/provision-wifi") handleProvisionWifi(c, contentLen);
-    else if (method == "POST" && basePath == "/frame")           handleFrame(c, path, contentLen);
+    else if (method == "POST" && basePath == "/frame")          handleFrame(c, path, contentLen);
+    else if (method == "POST" && basePath == "/beep") {
+        // Body: { "pattern": "chime|urgent|alert" }  or  { "freq": Hz, "ms": dur }
+        String body; body.reserve(contentLen + 1);
+        size_t got = 0;
+        uint32_t deadline = millis() + 2000;
+        while (got < contentLen && millis() < deadline) {
+            int b = c.read();
+            if (b < 0) { delay(1); continue; }
+            body += (char)b; got++;
+        }
+        JsonDocument doc;
+        deserializeJson(doc, body);
+        const char* pat = doc["pattern"] | "";
+        bool ok = true;
+        if (strcmp(pat, "chime") == 0)  audioBeepChime();
+        else if (strcmp(pat, "urgent") == 0) audioBeepUrgent();
+        else if (strcmp(pat, "alert") == 0)  audioBeepAlert();
+        else {
+            int freq = doc["freq"] | 0;
+            int ms   = doc["ms"]   | 200;
+            if (freq > 0) audioTone((uint16_t)freq, (uint16_t)ms);
+            else { ok = false; }
+        }
+        writeStatus(c, ok ? 200 : 400,
+                    ok ? "OK" : "Bad Request",
+                    "application/json",
+                    ok ? String("{\"ok\":true,\"pattern\":\"") + pat + "\"}"
+                       : String("{\"error\":\"need pattern or freq+ms\"}"));
+    }
     else writeError(c, 404, "Not Found", "no such route");
 
     c.flush();

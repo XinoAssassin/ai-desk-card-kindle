@@ -80,6 +80,35 @@ Whichever scheduler you wire up, the per-tick logic is:
    - POST `/widget` (see flow 05)
 4. Done. Each tick is idempotent; no extra state needed.
 
+## Sound notifications (Paper Color only)
+
+The Color device has a 1 W speaker + ES8311 codec. When the scheduled
+tick detects a deadline event (calendar `now` / next-meeting `start_in
+< 1m` / todo with `tag: overdue` newly arrived / urgent deadline), also
+POST a beep to the device:
+
+```bash
+curl -sf -X POST "http://<color-device-ip>:9880/beep" \
+  -H 'Content-Type: application/json' \
+  -d '{"pattern":"chime"}'        # chime|urgent|alert
+```
+
+Three preset patterns:
+
+- `chime` — three ascending notes (C5→E5→G5), ~600 ms. Use for soft
+  "look at the card" cues: meeting in 5 min, todo deadline approaching.
+- `urgent` — three rapid 880 Hz beeps, ~400 ms. Use for fired
+  deadlines: meeting starting now, overdue todo.
+- `alert` — single sharp 1320 Hz tone, ~150 ms. Use for ambient updates
+  that don't need rich melody: new mail arrived, push completed.
+
+Custom tone (advanced): send `{"freq": 660, "ms": 200}` instead of
+pattern. Range 50–12000 Hz, 1–3000 ms.
+
+V1.1 has no speaker — `/beep` doesn't exist there. Detect by reading
+`device.color_mode == "spectra6"` in the `/status` response, or by
+catching the 404 silently.
+
 ## Stopping the schedule
 
 - Native loop: stop the loop in the agent's UI / cancel the scheduled

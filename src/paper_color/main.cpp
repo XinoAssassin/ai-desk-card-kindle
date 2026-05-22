@@ -15,6 +15,7 @@
 #include "http_server.h"
 #include "sht40.h"
 #include "feedback_led.h"
+#include "audio.h"
 
 #ifndef CARD_VERSION
 #define CARD_VERSION "0.10.0-color"
@@ -120,6 +121,8 @@ void setup() {
     sht40Init();
     sht40Read();        // first measurement so /status has data immediately
     ledInit();
+    audioInit();
+    audioBeepAlert();   // boot ack — short beep so user knows it's alive
 
     wifiInit();
 }

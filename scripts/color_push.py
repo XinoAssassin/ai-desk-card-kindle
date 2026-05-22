@@ -223,6 +223,8 @@ def main():
                     help="Built-in pattern: stripes (color test), demo (4 schedule widgets), ambient (SHT40 + AI status + PRs + break)")
     ap.add_argument("--image", help="Path to PNG/JPG to push (auto-resized to 600×400)")
     ap.add_argument("--save", help="Save the rendered image locally before pushing")
+    ap.add_argument("--beep", choices=["chime", "urgent", "alert"],
+                    help="Also POST /beep with this pattern (sound notification)")
     args = ap.parse_args()
 
     device_status = _fetch_device_status(args.ip, args.port)
@@ -247,6 +249,19 @@ def main():
         print(f"[host] saved render to {args.save}")
 
     post_frame(args.ip, img, args.port)
+
+    if args.beep:
+        import json as _json
+        body = _json.dumps({"pattern": args.beep}).encode()
+        req = urllib.request.Request(
+            f"http://{args.ip}:{args.port}/beep",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=4) as r:
+                print(f"[beep] {args.beep} → {r.status}")
+        except Exception as e:
+            print(f"[beep] error: {e!r}")
 
 
 if __name__ == "__main__":
