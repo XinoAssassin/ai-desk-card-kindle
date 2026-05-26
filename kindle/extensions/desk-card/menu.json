@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"name": "Start polling",  "priority": 0, "action": "bin/start.sh",  "params": ""},
+    {"name": "Stop polling",   "priority": 1, "action": "bin/stop.sh",   "params": ""},
+    {"name": "Show last frame","priority": 2, "action": "bin/redraw.sh", "params": ""},
+    {"name": "Status",         "priority": 3, "action": "bin/status.sh", "params": ""}
+  ]
+}
