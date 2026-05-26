@@ -265,7 +265,7 @@ def paint_tasks(d: ImageDraw.ImageDraw, rect: tuple[int, int, int, int], data: d
     tasks = tasks[:9]
     rows_top = y + 64
     row_h = (h - 74) // max(len(tasks), 1)
-    row_h = min(row_h, 88)
+    row_h = min(row_h, 72)
 
     title_font_r = font(28, "medium")
     title_font_b = font(28, "bold")
