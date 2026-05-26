@@ -440,3 +440,102 @@ def render(cache: dict[str, dict], out_path: str, usb_ok: bool = True) -> None:
     tmp = out_path + ".tmp"
     img.save(tmp, format="PNG", optimize=True)
     os.replace(tmp, out_path)
+
+
+# ------------------------------------------------------------- sleep frame ---
+
+
+def render_sleep(weather_data: dict[str, Any] | None, out_path: str) -> None:
+    """Render a weather-only "lock screen" frame.
+
+    Used when the Mac itself is locked: the dashboard is irrelevant (the human
+    is away from the desk) but a glance-friendly weather card is still useful.
+    """
+    img = Image.new("L", (CANVAS_W, CANVAS_H), color=WHITE)
+    d = ImageDraw.Draw(img)
+
+    if not weather_data:
+        f = font(48, "normal")
+        msg = "天气暂无数据"
+        tw = _text_w(d, msg, f)
+        d.text(((CANVAS_W - tw) // 2, CANVAS_H // 2 - 24), msg, fill=GRAY, font=f)
+        tmp = out_path + ".tmp"
+        img.save(tmp, format="PNG", optimize=True)
+        os.replace(tmp, out_path)
+        return
+
+    city = str(weather_data.get("city", ""))[:12]
+    temp = weather_data.get("temp")
+    cond = str(weather_data.get("condition", ""))[:8]
+    hi = weather_data.get("high")
+    lo = weather_data.get("low")
+    feels = weather_data.get("feels_like")
+    humidity = weather_data.get("humidity")
+    wind = weather_data.get("wind")
+    aqi = weather_data.get("aqi")
+    aqi_label = weather_data.get("aqi_label") or ""
+    sunrise = weather_data.get("sunrise") or ""
+    sunset = weather_data.get("sunset") or ""
+    precip = weather_data.get("precip_prob")
+
+    # Vertical layout — anchor="mm" centers each row on its own y baseline,
+    # making spacing immune to font ascender/descender quirks.
+    cx = CANVAS_W // 2
+    city_font = font(72, "bold")
+    temp_font = font(320, "bold")
+    cond_font = font(72, "medium")
+    hilo_font = font(52, "normal")
+    meta_font = font(34, "normal")
+    sun_font  = font(40, "normal")
+
+    # City
+    d.text((cx, 220), city, fill=BLACK, font=city_font, anchor="mm")
+
+    # Huge temperature
+    temp_str = f"{int(temp)}°" if isinstance(temp, (int, float)) else "—"
+    d.text((cx, 500), temp_str, fill=BLACK, font=temp_font, anchor="mm")
+
+    # Condition
+    if cond:
+        d.text((cx, 770), cond, fill=BLACK, font=cond_font, anchor="mm")
+
+    # H / L
+    if isinstance(hi, (int, float)) and isinstance(lo, (int, float)):
+        hilo = f"H {int(hi)}°    L {int(lo)}°"
+        d.text((cx, 870), hilo, fill=DIM, font=hilo_font, anchor="mm")
+
+    # Secondary meta — feels-like + precipitation + humidity + wind
+    meta_parts: list[str] = []
+    if isinstance(feels, (int, float)):
+        meta_parts.append(f"体感 {int(feels)}°")
+    if isinstance(precip, (int, float)):
+        meta_parts.append(f"降雨 {int(precip)}%")
+    if isinstance(humidity, (int, float)):
+        meta_parts.append(f"湿度 {int(humidity)}%")
+    if isinstance(wind, (int, float)):
+        meta_parts.append(f"风 {int(wind)}级")
+    if meta_parts:
+        d.text((cx, 970), "  ·  ".join(meta_parts), fill=DIM, font=meta_font, anchor="mm")
+
+    # AQI
+    if aqi is not None:
+        aqi_text = f"AQI {int(aqi)} {aqi_label}".rstrip()
+        d.text((cx, 1030), aqi_text, fill=DIM, font=meta_font, anchor="mm")
+
+    # Sunrise / sunset
+    sun_parts = []
+    if sunrise:
+        sun_parts.append(f"日出 {sunrise}")
+    if sunset:
+        sun_parts.append(f"日落 {sunset}")
+    if sun_parts:
+        d.text((cx, BOTTOM_SAFETY_END - 110), "      ".join(sun_parts), fill=DIM, font=sun_font, anchor="mm")
+
+    # Footer — refresh time only
+    ts = dt.datetime.now().strftime("%Y-%m-%d  %H:%M")
+    foot_font = font(22, "normal")
+    d.text((cx, BOTTOM_SAFETY_END - 30), f"刷新于 {ts}", fill=DIM, font=foot_font, anchor="mm")
+
+    tmp = out_path + ".tmp"
+    img.save(tmp, format="PNG", optimize=True)
+    os.replace(tmp, out_path)

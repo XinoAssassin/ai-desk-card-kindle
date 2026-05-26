@@ -29,11 +29,13 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from render import render
+from mac_lock import is_locked
+from render import render, render_sleep
 
 DEFAULT_BIND = "192.168.15.201"
 DEFAULT_PORT = 9878
 FRAME_PATH = "/tmp/kindle-frame.png"
+SLEEP_FRAME_PATH = "/tmp/kindle-sleep.png"
 VALID_SLOTS = {"weather", "calendar", "tasks", "inbox"}
 
 _cache_lock = threading.Lock()
@@ -45,6 +47,7 @@ def _render_now() -> None:
     with _cache_lock:
         snapshot = dict(_widget_cache)
     render(snapshot, FRAME_PATH, usb_ok=_usb_ok)
+    render_sleep(snapshot.get("weather"), SLEEP_FRAME_PATH)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,12 +81,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         if parsed.path == "/kindle/frame.png":
+            path = SLEEP_FRAME_PATH if is_locked() else FRAME_PATH
             try:
-                with open(FRAME_PATH, "rb") as f:
+                with open(path, "rb") as f:
                     body = f.read()
             except FileNotFoundError:
                 _render_now()
-                with open(FRAME_PATH, "rb") as f:
+                with open(path, "rb") as f:
                     body = f.read()
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
@@ -99,7 +103,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/health":
-            self._json(200, {"ok": True, "usb_ok": _usb_ok, "slots": sorted(_widget_cache)})
+            self._json(200, {
+                "ok": True,
+                "usb_ok": _usb_ok,
+                "locked": is_locked(),
+                "slots": sorted(_widget_cache),
+            })
             return
 
         self.send_error(404, "not found")
