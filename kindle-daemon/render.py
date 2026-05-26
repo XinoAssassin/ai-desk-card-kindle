@@ -96,23 +96,71 @@ def paint_weather(d: ImageDraw.ImageDraw, rect: tuple[int, int, int, int], data:
     hi = data.get("high")
     lo = data.get("low")
 
-    # Left: city + condition (stacked); pushed down to visually align with
-    # the big right-side temperature glyph
-    d.text((x + PAD, y + 46), city, fill=BLACK, font=font(48, "bold"))
-    if cond:
-        d.text((x + PAD, y + 118), cond, fill=DIM, font=font(36, "normal"))
+    feels = data.get("feels_like")
+    humidity = data.get("humidity")
+    wind = data.get("wind")
+    aqi = data.get("aqi")
+    aqi_label = data.get("aqi_label") or ""
+    sunrise = data.get("sunrise") or ""
+    sunset = data.get("sunset") or ""
+    precip = data.get("precip_prob")
 
-    # Right: big temperature + hi/lo below
+    # ROW 1 — baseline-aligned on the left: city + temp + hi/lo
+    city_font = font(42, "bold")
+    temp_font = font(80, "bold")
+    hilo_font = font(22, "normal")
+    baseline_y = y + 82
+    cursor = x + PAD
+
+    d.text((cursor, baseline_y), city, fill=BLACK, font=city_font, anchor="ls")
+    cursor += _text_w(d, city, city_font) + 20
+
     temp_str = f"{int(temp)}°" if isinstance(temp, (int, float)) else "—"
-    temp_font = font(128, "bold")
-    temp_w = _text_w(d, temp_str, temp_font)
-    d.text((x + w - PAD - temp_w, y + 4), temp_str, fill=BLACK, font=temp_font)
+    d.text((cursor, baseline_y), temp_str, fill=BLACK, font=temp_font, anchor="ls")
+    cursor += _text_w(d, temp_str, temp_font) + 22
 
     if isinstance(hi, (int, float)) and isinstance(lo, (int, float)):
-        hilo = f"H {int(hi)}°   L {int(lo)}°"
-        hilo_font = font(28, "normal")
-        hilo_w = _text_w(d, hilo, hilo_font)
-        d.text((x + w - PAD - hilo_w, y + 158), hilo, fill=DIM, font=hilo_font)
+        hilo = f"H {int(hi)}°  L {int(lo)}°"
+        d.text((cursor, baseline_y), hilo, fill=DIM, font=hilo_font, anchor="ls")
+
+    sub_font_lg = font(24, "normal")
+    sub_font_sm = font(22, "normal")
+    sep = "  ·  "
+
+    # ROW 2 — condition + feels + precipitation (left) | AQI (right)
+    row2_y = y + 108
+    row2_left: list[str] = []
+    if cond:
+        row2_left.append(cond)
+    if isinstance(feels, (int, float)):
+        row2_left.append(f"体感 {int(feels)}°")
+    if isinstance(precip, (int, float)):
+        row2_left.append(f"降雨 {int(precip)}%")
+    if row2_left:
+        d.text((x + PAD, row2_y), sep.join(row2_left), fill=DIM, font=sub_font_lg)
+    if aqi is not None:
+        aqi_text = f"AQI {int(aqi)} {aqi_label}".rstrip()
+        aqi_w = _text_w(d, aqi_text, sub_font_lg)
+        d.text((x + w - PAD - aqi_w, row2_y), aqi_text, fill=DIM, font=sub_font_lg)
+
+    # ROW 3 — humidity + wind (left) | sunrise / sunset (right)
+    row3_y = y + 148
+    row3_left: list[str] = []
+    if isinstance(humidity, (int, float)):
+        row3_left.append(f"湿度 {int(humidity)}%")
+    if isinstance(wind, (int, float)):
+        row3_left.append(f"风 {int(wind)}级")
+    if row3_left:
+        d.text((x + PAD, row3_y), sep.join(row3_left), fill=DIM, font=sub_font_sm)
+    if sunrise or sunset:
+        sun_parts = []
+        if sunrise:
+            sun_parts.append(f"日出 {sunrise}")
+        if sunset:
+            sun_parts.append(f"日落 {sunset}")
+        sun_text = sep.join(sun_parts)
+        sun_w = _text_w(d, sun_text, sub_font_sm)
+        d.text((x + w - PAD - sun_w, row3_y), sun_text, fill=DIM, font=sub_font_sm)
 
 
 # --------------------------------------------------------------- calendar ---
