@@ -73,8 +73,8 @@ def fetch() -> dict:
         end_ = item.end.astimezone(tz) if item.end else None
         if not start:
             continue
-        # Drop events that already ended (>30 min ago)
-        if end_ and end_ + dt.timedelta(minutes=30) < now_local:
+        # Drop events that have already ended
+        if end_ and end_ <= now_local:
             continue
         title = _OUTLOOK_TAIL.sub("", (item.subject or "")).strip() or "(无标题)"
         rsvp_raw = getattr(item, "my_response_type", None) or "Unknown"
