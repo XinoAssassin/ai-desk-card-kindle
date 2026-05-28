@@ -96,7 +96,7 @@ done
 
 ### 5. Mac launchd
 
-放两个 plist 到 `~/Library/LaunchAgents/`，替换路径里的 `/Users/xino` 为自己的：
+放两个 plist 到 `~/Library/LaunchAgents/`，把 `<you>` 替换成自己的用户名：
 
 `com.kindle-desk-card.daemon.plist`：
 ```xml
@@ -105,10 +105,10 @@ done
 <plist version="1.0"><dict>
   <key>Label</key><string>com.kindle-desk-card.daemon</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/daemon.py</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/daemon.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon</string>
+  <key>WorkingDirectory</key><string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -124,10 +124,10 @@ done
 <plist version="1.0"><dict>
   <key>Label</key><string>com.kindle-desk-card.refresh</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/refresh.py</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/refresh.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon</string>
+  <key>WorkingDirectory</key><string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon</string>
   <key>StartInterval</key><integer>120</integer>
   <key>RunAtLoad</key><true/>
   <key>EnvironmentVariables</key><dict>

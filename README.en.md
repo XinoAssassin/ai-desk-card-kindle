@@ -106,8 +106,8 @@ Network you'll see "RNDIS/Ethernet Gadget":
 
 ### 5. macOS launchd
 
-Drop two plists into `~/Library/LaunchAgents/`, replacing `/Users/xino`
-with your home directory:
+Drop two plists into `~/Library/LaunchAgents/`, replacing `<you>` with
+your macOS username:
 
 `com.kindle-desk-card.daemon.plist`:
 ```xml
@@ -116,10 +116,10 @@ with your home directory:
 <plist version="1.0"><dict>
   <key>Label</key><string>com.kindle-desk-card.daemon</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/daemon.py</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/daemon.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon</string>
+  <key>WorkingDirectory</key><string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -135,10 +135,10 @@ with your home directory:
 <plist version="1.0"><dict>
   <key>Label</key><string>com.kindle-desk-card.refresh</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
-    <string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon/refresh.py</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/.venv/bin/python</string>
+    <string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon/refresh.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/xino/Develop/ai-desk-card-kindle/kindle-daemon</string>
+  <key>WorkingDirectory</key><string>/Users/&lt;you&gt;/Develop/ai-desk-card-kindle/kindle-daemon</string>
   <key>StartInterval</key><integer>120</integer>
   <key>RunAtLoad</key><true/>
   <key>EnvironmentVariables</key><dict>
