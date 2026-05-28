@@ -6,6 +6,13 @@ Kindle pulls it every two minutes over USB Ethernet.
 
 > 🌏 **中文: [README.md](./README.md)**
 
+<p align="center">
+  <img src="docs/demo.png" alt="Dashboard frame example" width="44%">
+  &nbsp;
+  <img src="docs/demo-sleep.png" alt="Sleep frame example" width="44%">
+</p>
+<p align="center"><em>Left: full dashboard · Right: minimal weather card while the Mac is locked (sample data)</em></p>
+
 ```
 ┌──────── Mac ────────┐                  ┌──── Kindle (USB-Eth) ────┐
 │ launchd refresh.py  │                  │ upstart                  │

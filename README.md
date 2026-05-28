@@ -4,6 +4,13 @@
 
 > 🌏 **English: [README.en.md](./README.en.md)**
 
+<p align="center">
+  <img src="docs/demo.png" alt="Dashboard frame example" width="44%">
+  &nbsp;
+  <img src="docs/demo-sleep.png" alt="Sleep frame example" width="44%">
+</p>
+<p align="center"><em>左：常规 dashboard · 右：Mac 锁屏时的精简天气卡（数据均为示例）</em></p>
+
 ```
 ┌──────── Mac ────────┐                  ┌──── Kindle (USB-Eth) ────┐
 │ launchd refresh.py  │                  │ upstart                  │
