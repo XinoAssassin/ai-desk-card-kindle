@@ -193,6 +193,10 @@ launchctl kickstart -k gui/$UID/com.kindle-desk-card.daemon
 - **OTA 升级**: Kindle 系统升级会清空 `/etc/upstart/kindle-desk-card.conf`，重新跑安装第 6 步即可
 - **lipc preventScreenSaver**: 不要用 — 在 KPW3 5.14.x 上会锁死电源键；接受默认 10-15min 自动锁屏，下次 poll 覆盖锁屏图
 
+## 给 AI Agent 用
+
+`skills/kindle-desk-card/SKILL.md` 是一份给 Claude Code / Codex 等 Agent 的运维 skill —— 描述了 status check、强制刷新、切换数据源、重启服务、看日志等场景下要跑什么命令、看什么日志、改什么文件。装好之后跟 Agent 说"刷新一下卡片"或"看看 desk card 状态"它就知道该怎么做。
+
 ## 鸣谢
 
 本仓库的渲染思路 + widget 契约源自 [op7418/ai-desk-card](https://github.com/op7418/ai-desk-card)（M5Paper 版本）。Kindle port 完全独立实现，不共享代码。

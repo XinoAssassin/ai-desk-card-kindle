@@ -213,6 +213,14 @@ launchctl kickstart -k gui/$UID/com.kindle-desk-card.daemon
   the power button. Accept the default 10-15 min auto-lock; the next
   poll repaints over the lockscreen image.
 
+## For AI agents
+
+`skills/kindle-desk-card/SKILL.md` is an ops skill for Claude Code /
+Codex / other agents. It documents what to run, where to look, and what
+to edit for the common runtime tasks (status check, force refresh, swap
+a data source, restart services, tail logs). Once installed, asking the
+agent "refresh the card" or "check desk card status" routes through it.
+
 ## Credits
 
 The rendering approach and widget contracts originate from
