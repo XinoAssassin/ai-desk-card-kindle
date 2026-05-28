@@ -19,17 +19,9 @@ import time
 import urllib.error
 import urllib.request
 
-from adapters import exchange_calendar, exchange_inbox, lark_tasks, weather
+from config import resolved_sources
 
 DAEMON_URL = "http://192.168.15.201:9878"
-
-# (slot, label, fetch_callable)
-SOURCES: list[tuple[str, str, callable]] = [
-    ("weather",  "weather",           weather.fetch),
-    ("calendar", "exchange-calendar", exchange_calendar.fetch),
-    ("tasks",    "lark-tasks",        lark_tasks.fetch),
-    ("inbox",    "exchange-inbox",    exchange_inbox.fetch),
-]
 
 
 def post_widget(slot: str, data: dict, base_url: str) -> tuple[bool, str]:
@@ -61,7 +53,7 @@ def main() -> int:
     only = set(args.only.split(",")) if args.only else None
     n_ok = n_fail = 0
 
-    for slot, label, fetcher in SOURCES:
+    for slot, label, fetcher in resolved_sources():
         if only and slot not in only:
             continue
         t0 = time.monotonic()

@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to ~/.config/kindle-desk-card/sources.json and edit. Defaults are used if the file is missing.",
+  "_available_adapters": {
+    "weather":  ["weather"],
+    "calendar": ["exchange_calendar", "lark_calendar"],
+    "tasks":    ["lark_tasks"],
+    "inbox":    ["exchange_inbox", "gmail"]
+  },
+  "_disable_a_slot": "set its value to null (or omit the key) — the dashboard will show a blank placeholder",
+
+  "weather":  "weather",
+  "calendar": "exchange_calendar",
+  "tasks":    "lark_tasks",
+  "inbox":    "exchange_inbox"
+}

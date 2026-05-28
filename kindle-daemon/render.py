@@ -1,15 +1,19 @@
 """Render a 1072×1448 grayscale PNG for the Kindle Paperwhite 3 from the
 widget cache.
 
-Layout (portrait, fixed 4 regions):
-  weather   y=  0  h= 220   top strip: city + temp + condition + hi/lo
-  calendar  y=220  h= 760   main: today's agenda list
-  inbox     y=980  h= 380   lark unread mail + sender breakdown
-  footer    y=1360 h=  88   last-refresh timestamp
+Portrait layout, top-down (offsets are TOP_RESERVE-relative — see LAYOUT):
+  weather   3-line compact strip (city + temp + H/L, condition + AQI, etc.)
+  calendar  left half of the middle row — agenda for today and tomorrow
+  tasks     right half of the middle row — Lark open tasks
+  inbox     5 most recent emails with unread bullets
+  footer    refresh timestamp + USB-link indicator
 
-The render is forgiving: missing widget data renders an empty region with a
-"no data" hint. Bad fields are clipped, not raised. The Kindle is ambient,
-not transactional — never crash a render over malformed input.
+A second compose path (`render_sleep`) produces a weather-only "lock"
+frame served while the Mac is locked.
+
+The renderer is forgiving: missing widget data draws an "暂无数据" placeholder.
+Bad fields are clipped, not raised. The Kindle is ambient, not transactional —
+never crash a render over malformed input.
 """
 from __future__ import annotations
 
